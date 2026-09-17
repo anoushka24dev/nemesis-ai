@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nemesis — Mode 2 / Config C1 · Stitch MCP Demo</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="neon-strip"></div>
+
+<!-- ============ TOP BAR ============ -->
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◆</span>
+    <div class="brand-text">
+      <h1>Nemesis</h1>
+      <span class="sub">Adaptive AI Agent Defense Evaluation</span>
+    </div>
+  </div>
+  <nav class="tabs" id="tabNav">
+    <button class="tab active" data-tab="demo">Runner</button>
+    <button class="tab" data-tab="results">Dashboard</button>
+    <button class="tab" data-tab="docs">Docs</button>
+    <button class="tab" data-tab="adr">ADR</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============ TAB: DEMO RUNNER ============ -->
+  <section class="panel" id="panel-demo">
+    <div class="panel-head">
+      <h2>Command Center</h2>
+      <p class="muted">Mode 2 / Config C1 — cross-agent evaluation with CaMeL defense.</p>
+    </div>
+
+    <!-- Hero / status row -->
+    <div class="hero" id="hero">
+      <div class="hero-status">
+        <span class="status-dot idle" id="statusDot"></span>
+        <span class="status-label" id="statusLabel">Ready</span>
+        <span class="status-sub" id="statusSub">Awaiting execution</span>
+      </div>
+
+      <div class="metric-cards" id="metricCards">
+        <div class="mc-card">
+          <div class="mc-label">Defense</div>
+          <div class="mc-value">CaMeL</div>
+          <div class="mc-state active">Active</div>
+        </div>
+        <div class="mc-card">
+          <div class="mc-label">Mode</div>
+          <div class="mc-value">Cross-Agent</div>
+          <div class="mc-state">Email → Calendar</div>
+        </div>
+        <div class="mc-card">
+          <div class="mc-label">Episodes</div>
+          <div class="mc-value" id="mcEpisodes">2</div>
+          <div class="mc-state">configured</div>
+        </div>
+        <div class="mc-card">
+          <div class="mc-label">Rounds</div>
+          <div class="mc-value" id="mcRounds">2</div>
+          <div class="mc-state">adaptive</div>
+        </div>
+      </div>
+
+      <div class="runtime-chip" id="runtimeChip" style="display:none">
+        <span class="chip-label">Runtime</span>
+        <span class="chip-value" id="runtimeValue">0.0s</span>
+      </div>
+    </div>
+
+    <!-- Execution progress -->
+    <div class="exec-bar" id="execBar" style="display:none">
+      <div class="exec-track">
+        <div class="exec-fill" id="execFill"></div>
+      </div>
+      <div class="exec-meta">
+        <span class="exec-label" id="execLabel">Initializing…</span>
+        <span class="exec-pct" id="execPct">0%</span>
+      </div>
+    </div>
+
+    <!-- Run button row -->
+    <div class="action-row">
+      <button class="btn primary run-btn" id="runBtn">
+        <span class="btn-icon">▶</span>
+        <span class="btn-text">Run Adaptive Evaluation</span>
+        <span class="btn-spinner" id="btnSpinner" style="display:none"></span>
+      </button>
+      <div class="action-meta">
+        <span>Execute 2 episodes × 2 adaptive rounds</span>
+        <span class="sep">·</span>
+        <span>Auto-refresh dashboard</span>
+      </div>
+    </div>
+
+    <!-- Live timeline -->
+    <div class="timeline-card" id="timelineCard" style="display:none">
+      <div class="timeline-head">
+        <h3>Execution Timeline</h3>
+        <span class="timeline-count" id="timelineCount">0 events</span>
+      </div>
+      <div class="timeline" id="timeline"></div>
+    </div>
+
+    <!-- Result summary (blocked/partial/bypassed) -->
+    <div class="summary-row" id="summaryRow" style="display:none">
+      <div class="summary-card blocked">
+        <div class="sum-num" id="sumBlocked">0</div>
+        <div class="sum-label">Blocked</div>
+      </div>
+      <div class="summary-card partial">
+        <div class="sum-num" id="sumPartial">0</div>
+        <div class="sum-label">Partial</div>
+      </div>
+      <div class="summary-card bypassed">
+        <div class="sum-num" id="sumBypassed">0</div>
+        <div class="sum-label">Bypassed</div>
+      </div>
+    </div>
+
+    <!-- Raw result JSON -->
+    <div class="json-card" id="jsonCard" style="display:none">
+      <div class="json-head">
+        <h3>Raw Result JSON</h3>
+        <button class="btn ghost btn-sm copy-btn" id="copyBtn">
+          <span class="btn-icon">📋</span> Copy
+        </button>
+      </div>
+      <div class="json-view" id="returnDict"><span class="json-placeholder">—</span></div>
+    </div>
+
+    <!-- Run log -->
+    <div class="card log-card">
+      <h3>Execution Log</h3>
+      <pre class="run-log" id="runLog"></pre>
+    </div>
+  </section>
+
+  <!-- ============ TAB: RESULTS DASHBOARD ============ -->
+  <section class="panel hidden" id="panel-results">
+    <div class="panel-head">
+      <h2>Results Dashboard</h2>
+      <p class="muted">Reads <code>results/mode2_c1/episodes.csv</code> and <code>config_summary.json</code>. Refresh after each run.</p>
+    </div>
+
+    <div class="dash-toolbar">
+      <button class="btn secondary" id="refreshResultsBtn">⟳ Refresh</button>
+      <div class="view-toggle">
+        <button class="toggle-btn active" data-view="table">Table</button>
+        <button class="toggle-btn" data-view="chart">Chart</button>
+      </div>
+    </div>
+
+    <div class="card" id="tableView">
+      <table class="data-table" id="resultsTable">
+        <thead>
+          <tr>
+            <th>episode_id</th>
+            <th>outcome</th>
+            <th>rounds_used</th>
+            <th>ASR</th>
+            <th>utility</th>
+            <th>propagation</th>
+            <th>blast_radius</th>
+            <th>checksum</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody">
+          <tr><td colspan="8" class="empty">No episodes loaded. Run the demo first.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card hidden" id="chartView">
+      <div class="chart-wrap">
+        <canvas id="asrChart" width="600" height="340"></canvas>
+      </div>
+      <p class="chart-note">Per-episode ASR and propagation flag, drawn from episodes.csv.</p>
+    </div>
+
+    <div class="card agg-card" id="aggCard">
+      <h3>Aggregated Metrics <span class="muted">(config_summary.json)</span></h3>
+      <div class="agg-grid" id="aggGrid">
+        <div class="agg-cell"><span class="agg-label">Episodes</span><span class="agg-value" id="aggEpisodes">—</span></div>
+        <div class="agg-cell"><span class="agg-label">ASR</span><span class="agg-value" id="aggAsr">—</span></div>
+        <div class="agg-cell"><span class="agg-label">Utility</span><span class="agg-value" id="aggUtility">—</span></div>
+        <div class="agg-cell"><span class="agg-label">Propagation Rate</span><span class="agg-value" id="aggProp">—</span></div>
+        <div class="agg-cell"><span class="agg-label">Blast Radius</span><span class="agg-value" id="aggBlast">—</span></div>
+        <div class="agg-cell"><span class="agg-label">Rounds to Success</span><span class="agg-value" id="aggRounds">—</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TAB: DOCS VIEWER ============ -->
+  <section class="panel hidden" id="panel-docs">
+    <div class="panel-head">
+      <h2>Docs Viewer</h2>
+      <p class="muted">Rendered from <code>docs/RESULTS_TEMPLATE.md</code> and <code>docs/EXPERIMENT_PLAN.md</code>.</p>
+    </div>
+    <div class="doc-tabs">
+      <button class="doc-tab active" data-doc="results_template">RESULTS_TEMPLATE.md</button>
+      <button class="doc-tab" data-doc="experiment_plan">EXPERIMENT_PLAN.md</button>
+    </div>
+    <div class="doc-body card">
+      <div class="markdown-body" id="docContent"><p class="muted">Select a document above.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB: ADR VIEWER ============ -->
+  <section class="panel hidden" id="panel-adr">
+    <div class="panel-head">
+      <h2>ADR Viewer</h2>
+      <p class="muted">Clickable architecture decision records. Start with <strong>ADR-001</strong>.</p>
+    </div>
+    <div class="adr-list card">
+      <ul class="adr-index" id="adrIndex"></ul>
+    </div>
+    <div class="adr-body card hidden" id="adrBody">
+      <button class="btn ghost btn-sm" id="adrBackBtn">← ADR index</button>
+      <h3 id="adrTitle">—</h3>
+      <div class="markdown-body" id="adrContent"></div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
