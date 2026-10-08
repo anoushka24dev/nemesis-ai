@@ -37,3 +37,6 @@ Thumbs.db
 # Config secrets / local overrides — keep a template, not real values
 *.local.yml
 .env.local
+
+# Rust compiler artifacts (local scratch builds, not shipped)
+*.rcgu.o

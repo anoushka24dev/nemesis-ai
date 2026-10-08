@@ -75,18 +75,26 @@ def test_defense_adapter_majority_voting():
 
     adapter = DefenseAdapter()
 
-    # Two denies, one allow → majority deny
+    # Two denies, one allow -> majority deny
     events = [
-        DefenseEvent(Decision=DefenseDecision.DENIED, confidence=0.8, evidence="a", source=DefenseType.CAMEL),
-        DefenseEvent(Decision=DefenseDecision.DENIED, confidence=0.7, evidence="b", source=DefenseType.PROGENT),
-        DefenseEvent(Decision=DefenseDecision.ALLOWED, confidence=0.9, evidence="c", source=DefenseType.VERIFIER),
-    ]
-
-    # Use lowercase field names (dataclass style)
-    events = [
-        DefenseEvent(decision=DefenseDecision.DENIED, confidence=0.8, evidence="a", source=DefenseType.CAMEL),
-        DefenseEvent(decision=DefenseDecision.DENIED, confidence=0.7, evidence="b", source=DefenseType.PROGENT),
-        DefenseEvent(decision=DefenseDecision.ALLOWED, confidence=0.9, evidence="c", source=DefenseType.VERIFIER),
+        DefenseEvent(
+            decision=DefenseDecision.DENIED,
+            confidence=0.8,
+            evidence="a",
+            source=DefenseType.CAMEL,
+        ),
+        DefenseEvent(
+            decision=DefenseDecision.DENIED,
+            confidence=0.7,
+            evidence="b",
+            source=DefenseType.PROGENT,
+        ),
+        DefenseEvent(
+            decision=DefenseDecision.ALLOWED,
+            confidence=0.9,
+            evidence="c",
+            source=DefenseType.VERIFIER,
+        ),
     ]
 
     result = adapter.normalize(events)
