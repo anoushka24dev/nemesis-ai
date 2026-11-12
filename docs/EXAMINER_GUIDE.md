@@ -23,12 +23,25 @@ A framework that tests whether AI agent defenses (CaMeL, Progent, custom verifie
 AI agents are increasingly trusted with real-world permissions (email, payments, files). Most defenses are tested against fixed attacks. This project evaluates them under realistic, adaptive pressure.
 
 **Key numbers:**
-- 5 experimental modes
-- 38 configurations
-- 1,900 episodes
-- 3 defense mechanisms
+- 5 experimental modes (original research design)
+- 38 configurations / 1,900 episodes — the *original design*; the approved,
+  validated manifest is **26 configurations / 1,300 episodes**
+  ([CONTRACTS.md §7](CONTRACTS.md), ADR-016/017 in
+  [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)), and full-matrix
+  execution is refused by today's runner
+- 3 defense mechanisms (simplified proxies, not faithful reproductions —
+  see [PRD.md](PRD.md) §1.13)
 - 5 memory types
 - 8 primary metrics
+
+**Product framing:** Nemesis has two distinct experiences — the Research
+Dashboard (HTTP API target connection, adaptive experiments, sequential
+defense replay; the Agent Framework connection is **not** implemented and the
+Local Python Agent method is **retired**) and the read-only Gmail Security
+Side Panel (implemented). See
+[PRD.md §1.6](PRD.md) before describing what the product does today; the
+dashboard renders persisted evidence only and shows unavailable values as
+unavailable.
 
 ---
 
@@ -59,7 +72,7 @@ AI agents are increasingly trusted with real-world permissions (email, payments,
 - 6 goals with success metrics
 - Memory system requirements (5 types)
 - Security hardening requirements
-- 1,900 episode total
+- 1,900 episode total (original design; approved manifest = 26 configs / 1,300 episodes)
 
 **Key questions to ask:**
 1. What are the success criteria? → Section 8 (metrics & success criteria)
@@ -157,7 +170,7 @@ Use this checklist to verify the project's claims:
 - [ ] Majority voting for defense composition (verified by adapter tests)
 
 ### Experiments
-- [ ] 1,900 total episodes across 5 modes
+- [ ] 1,900 total episodes across 5 modes (original design — compare with the approved 26-config / 1,300-episode manifest in CONTRACTS.md §7)
 - [ ] 50 episodes per configuration (statistical power)
 - [ ] Random seeds documented (base 42, config×1000)
 - [ ] Model versions pinned (claude-3-haiku-20240307, etc.)
@@ -221,7 +234,7 @@ For a thorough review, follow this order:
 | Checksums are computed | SECURITY_HARDENING.md §3 | Run: `pytest tests/test_security.py -k "checksum"` |
 | ASR < 20% target | METRICS_DEFINITIONS.md §1.1 | Review experiment results when available |
 | Utility ≥ 90% target | METRICS_DEFINITIONS.md §1.2 | Review benign task results |
-| 1,900 episodes planned | EXPERIMENT_PLAN.md §9 | Count configs × episodes in all 5 modes |
+| 1,900 episodes = original design (26/1,300 approved) | EXPERIMENT_PLAN.md §Scope note, CONTRACTS.md §7 | Count configs × episodes in all 5 modes; compare with the approved manifest |
 | 30+ unit tests exist | TESTING.md §2 | Run: `pytest tests/ --collect-only` |
 | Human audit at 10% | RESULTS_TEMPLATE.md §3 | Review audit sampling plan |
 

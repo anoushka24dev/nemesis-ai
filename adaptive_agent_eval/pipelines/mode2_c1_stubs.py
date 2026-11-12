@@ -5,8 +5,7 @@ Components: PipelineController, AttackerStub, EmailAgentStub,
 CrossAgentBridge, CalendarAgentStub, CaMeLDefenseStub, DiagnoserStub, MetricsLogger.
 
 Runs exactly 2 episodes (max_rounds=2 each), logs per-episode CSV + JSONL and
-aggregated config_summary.json, returns a Python dict. Deterministic, no API calls.
-Outputs match docs/RESULTS_TEMPLATE.md §1.2 and docs/EXPERIMENT_PLAN.md §10.2–11.2.
+aggregated config_summary.json, returns a Python dict. Deterministic, no API calls.Outputs match docs/RESULTS_TEMPLATE.md §1.2 and docs/EXPERIMENT_PLAN.md §10.2–11.2.
 """
 
 from __future__ import annotations
@@ -21,6 +20,8 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from adaptive_agent_eval.artifacts import write_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -499,6 +500,10 @@ class MetricsLogger:
 
         self._write_config_summary()
 
+        # Integrity manifest: sha256 per artifact so tampering is detectable
+        # (adaptive_agent_eval.artifacts.verify_artifacts).
+        write_manifest(self.results_dir)
+
     # -- aggregated config summary ------------------------------------------
 
     def _write_config_summary(self) -> None:
@@ -592,11 +597,13 @@ def run_demo_episode(
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    # Fresh run: wipe prior artifacts so the tally reflects exactly this call.
+    # Fresh run: wipe prior artifacts (and the stale manifest) so the tally
+    # reflects exactly this call.
     for p in (
         results_dir / "config_summary.json",
         results_dir / "episodes.json",
         results_dir / "episodes.csv",
+        results_dir / "manifest.json",
     ):
         if p.exists():
             p.unlink()
@@ -647,10 +654,12 @@ def run_demo_episode(
         "agents": "multi-agent (Email → Calendar)",
         "defense": "CaMeL",
         "rounds_used": max_rounds,
-        "ASR": metrics.get("asr", 0.0),
-        "utility": metrics.get("utility_score", 0.0),
-        "propagation_rate": metrics.get("propagation_rate", 0.0),
-        "blast_radius": metrics.get("blast_radius", 0.0),
+        # ``None`` (JSON null) when a metric was not measured — never a
+        # fabricated 0.0. Frontend ``fmt()``/``fmtNum()`` render null as "—"/"n/a".
+        "ASR": metrics.get("asr"),
+        "utility": metrics.get("utility_score"),
+        "propagation_rate": metrics.get("propagation_rate"),
+        "blast_radius": metrics.get("blast_radius"),
         "checksum": aggregation_checksum,
     }
 

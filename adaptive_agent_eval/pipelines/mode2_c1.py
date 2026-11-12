@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from adaptive_agent_eval.artifacts import write_manifest
+
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path("results/mode2_c1")
@@ -365,6 +367,9 @@ class MetricsLogger:
 
         # --- Per-config summary (EXPERIMENT_PLAN.md §11.2) ---
         self._write_config_summary()
+
+        # --- Integrity manifest (sha256 per artifact, verifiable later) ---
+        write_manifest(self.results_dir)
 
     def _write_config_summary(self) -> None:
         rows = json.loads(self.episodes_json.read_text(encoding="utf-8"))

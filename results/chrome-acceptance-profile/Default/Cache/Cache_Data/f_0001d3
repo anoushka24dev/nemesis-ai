@@ -1,0 +1,1599 @@
+/* ===== Nemesis dashboard — real backend data only ===== */
+
+const state = {
+  overview: null,
+  page: "experiments",
+  pollTimer: null,
+  starting: false,
+};
+
+const $ = (id) => document.getElementById(id);
+
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function na(value, fallback = "—") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return value;
+}
+
+function parseTs(iso) {
+  if (!iso) return NaN;
+  // Persisted timestamps are ISO-8601 and may carry an explicit +00:00 offset
+  // or no zone at all. Try the value as-is first, then assume UTC.
+  let t = Date.parse(iso);
+  if (Number.isNaN(t)) t = Date.parse(`${iso}Z`);
+  return t;
+}
+
+function timeAgo(iso) {
+  if (!iso) return "";
+  const t = parseTs(iso);
+  if (Number.isNaN(t)) return "";
+  const secs = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function clockTime(iso) {
+  if (!iso) return "—";
+  const t = parseTs(iso);
+  if (Number.isNaN(t)) return "—";
+  return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function toast(message, bad = false) {
+  const el = $("toast");
+  el.textContent = message;
+  el.className = "toast" + (bad ? " bad" : "");
+  el.hidden = false;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.hidden = true; }, 5000);
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) {
+    const reason = (data && (data.error || data.detail)) || `HTTP ${res.status}`;
+    const err = new Error(reason);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+/* ---------------- navigation ---------------- */
+
+function setPage(page) {
+  state.page = page;
+  document.querySelectorAll(".page").forEach((el) => {
+    el.hidden = el.id !== `page-${page}`;
+  });
+  document.querySelectorAll("[data-page]").forEach((el) => {
+    const target = el.dataset.page;
+    if (!target) return;
+    if (el.classList.contains("nav-item")) {
+      el.classList.toggle("active", target === page);
+    }
+  });
+  if (page === "experiments") {
+    requestAnimationFrame(drawChart);
+  }
+  if (page === "defenses") {
+    loadDefenseCampaigns();
+    restoreDefenseJob();
+  }
+  if (page === "gmail") {
+    loadGmailStatus();
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const nav = event.target.closest("[data-page]");
+  if (nav && nav.dataset.page) {
+    setPage(nav.dataset.page);
+  }
+});
+
+/* ---------------- overview polling ---------------- */
+
+async function loadOverview({ quiet = false } = {}) {
+  try {
+    const data = await api("/api/overview");
+    state.overview = data;
+    renderAll();
+    schedulePoll();
+  } catch (err) {
+    if (!quiet) toast(`Dashboard state unavailable: ${err.message}`, true);
+    $("phaseText").textContent = "Backend unreachable";
+  }
+}
+
+function schedulePoll() {
+  clearTimeout(state.pollTimer);
+  const o = state.overview;
+  const active = o && (o.lifecycle?.phase === "attacker" || o.lifecycle?.running);
+  state.pollTimer = setTimeout(() => loadOverview({ quiet: true }), active ? 2000 : 12000);
+}
+
+/* ---------------- render: all ---------------- */
+
+function renderAll() {
+  const o = state.overview;
+  if (!o) return;
+  renderTopbar(o);
+  renderRail(o);
+  renderActive(o);
+  renderAgents(o);
+  renderDefenses(o);
+  renderReports(o);
+  renderSettings(o);
+  renderHome(o);
+  renderStepper(o);
+}
+
+function renderTopbar(o) {
+  const p = o.provider || {};
+  const dot = $("modelDot");
+  dot.className = "dot " + (p.ready ? "ok" : p.reachable ? "warn" : "bad");
+  $("modelChipTitle").textContent = p.ready
+    ? "Ollama Connected"
+    : p.reachable
+      ? "Ollama — model missing"
+      : "Ollama unreachable";
+  $("modelChipModel").textContent = p.model || p.default_model || "—";
+}
+
+function renderStepper(o) {
+  const steps = document.querySelectorAll("#stepper .step");
+  const connected = !!(o.connection && o.connection.ready);
+  const hasRun = !!o.run;
+  // Steps complete strictly in order: a later step is never marked done while
+  // an earlier one is outstanding.
+  const done = {
+    1: connected,
+    2: connected,
+    3: connected,
+    4: connected && hasRun,
+  };
+  let activeSet = false;
+  steps.forEach((el) => {
+    const n = Number(el.dataset.step);
+    el.classList.toggle("done", !!done[n]);
+    const isActive = !activeSet && !done[n];
+    el.classList.toggle("active", isActive);
+    if (isActive) activeSet = true;
+  });
+  if (!activeSet && steps.length) {
+    steps[steps.length - 1].classList.add("active");
+  }
+  if (connected) {
+    $("connectInfoText").textContent =
+      `Connected: ${o.connection.display_name} · ${o.connection.config?.target_id || o.connection.config?.endpoint_url || "ready"}. Change it any time in Agents.`;
+  }
+}
+
+function renderRail(o) {
+  /* connected agent */
+  const conn = o.connection;
+  const agentPill = $("agentPill");
+  const connected = !!(conn && conn.ready);
+  agentPill.className = "pill sm " + (connected ? "ok" : "idle");
+  $("agentPillText").textContent = connected ? "Connected" : "Not connected";
+  $("agentName").textContent = connected
+    ? conn.display_name
+    : "No target connected";
+  $("agentKind").textContent = connected
+    ? (conn.config?.target_id ||
+       conn.config?.endpoint_url ||
+       conn.config?.module ||
+       "—")
+    : "Runs use the labelled seeded stand-in";
+
+  /* objectives */
+  const list = $("objectiveList");
+  list.innerHTML = (o.taxonomy.objectives || [])
+    .map((obj) => `<li><span class="obj-check">✓</span><span>${esc(obj.name)}</span></li>`)
+    .join("");
+
+  /* model */
+  const p = o.provider || {};
+  const modelPill = $("modelPill");
+  modelPill.className = "pill sm right " + (p.ready ? "ok" : p.reachable ? "warn" : "bad");
+  $("modelPillText").textContent = p.ready ? "Online" : p.reachable ? "Model missing" : "Offline";
+  $("modelName").textContent = "Ollama";
+  $("modelId").textContent = p.model || p.default_model || "—";
+  const note = $("modelNote");
+  if (p.ready) {
+    note.className = "rail-note";
+    note.textContent = `Reachable at ${p.endpoint} · model installed.`;
+  } else {
+    note.className = "rail-note error";
+    note.textContent = p.error || "Run `ollama list` to check the local service.";
+  }
+
+  /* settings rail */
+  const settings = o.settings || {};
+  const run = o.run || {};
+  $("setMax").textContent = run.total_episode_budget != null
+    ? `${run.total_episode_budget} episodes`
+    : `${settings.limits?.approved_experiment_budget ?? "—"} approved`;
+  const modeShown = run.mode || settings.search_mode;
+  $("setClimb").textContent = modeShown
+    ? (modeShown === "greedy" ? "Enabled (greedy)" : "Enabled (feedback)")
+    : "Idle";
+  const catalog = o.defense.catalog || [];
+  const realDefenses = catalog.filter((d) => d.available && d.implementation_type === "real_integration").length;
+  const proxyDefenses = catalog.filter((d) => d.available && d.implementation_type === "local_proxy").length;
+  if (realDefenses && proxyDefenses) {
+    $("setDefense").textContent = `${realDefenses} real + ${proxyDefenses} proxies`;
+  } else if (realDefenses) {
+    $("setDefense").textContent = `${realDefenses} real`;
+  } else if (proxyDefenses) {
+    $("setDefense").textContent = `${proxyDefenses} proxies`;
+  } else {
+    $("setDefense").textContent = "Unavailable";
+  }
+}
+
+function renderActive(o) {
+  const run = o.run;
+  const active = o.active_run;
+  const phase = o.lifecycle?.phase || "idle";
+  const pill = $("phasePill");
+  const text = $("phaseText");
+  const map = {
+    idle: ["idle", "Idle"],
+    attacker: ["running", "Running"],
+    defense_ready: ["ok", "Defense ready"],
+    defense_completed: ["ok", "Defense evaluated"],
+    defense_inconclusive: ["warn", "Defense inconclusive"],
+    incomplete: ["warn", "Incomplete"],
+  };
+  const [cls, label] = map[phase] || ["idle", phase];
+  pill.className = "pill " + cls;
+  text.textContent = label;
+
+  const sub = $("activeSub");
+  if (phase === "attacker" && active) {
+    sub.textContent = `Run ${active.run_id || "—"} · target ${active.target || o.settings?.target || "seeded stand-in"} · mode ${active.mode || o.settings?.search_mode || "—"}`;
+  } else if (run) {
+    const assistantKind = run.assistant?.kind ? ` (${run.assistant.kind})` : "";
+    sub.textContent = `Last run ${run.run_id} · target ${run.target || "seeded stand-in"} (${run.target_kind || "unknown"}) · assistant ${run.assistant?.provider || o.settings?.assistant_provider || "none"}${assistantKind}`;
+  } else {
+    sub.textContent = "No experiment has run yet. Connect an agent and press New Experiment.";
+  }
+
+  $("pauseBtn").disabled = true;
+  $("stopBtn").disabled = phase !== "attacker";
+
+  const m = o.metrics || {};
+  const statTone = {
+    statCandidates: "",
+    statSuccess: "green",
+    statBlocked: "blue",
+    statTechnical: "red",
+    statInconclusive: "slate",
+  };
+  const setStat = (id, value) => {
+    const el = $(id);
+    if (value === null || value === undefined) {
+      el.textContent = "Unavailable";
+      el.className = "stat-value na";
+    } else {
+      el.textContent = value;
+      el.className = `stat-value ${statTone[id] || ""}`.trim();
+    }
+  };
+  setStat("statCandidates", m.candidates_evaluated ?? (run ? run.candidate_evaluations : null));
+  setStat("statSuccess", m.success);
+  setStat("statBlocked", m.blocked);
+  setStat("statTechnical", m.technical_fail);
+  setStat("statInconclusive", m.inconclusive);
+
+  const consumed = m.episodes_consumed ?? run?.episodes_consumed;
+  const budget = m.episode_budget ?? run?.total_episode_budget;
+  $("progressMeta").textContent =
+    consumed != null && budget != null ? `${consumed} / ${budget}` : "Unavailable";
+  $("progressFill").style.width =
+    consumed != null && budget ? `${Math.min(100, (consumed / budget) * 100)}%` : "0%";
+
+  const dims = m.dimensions || [];
+  $("dimMeta").textContent = dims.length && dims[0].denominator
+    ? `${dims[0].denominator} candidate(s)`
+    : "No data";
+  $("dimList").innerHTML = dims.length
+    ? dims.map((d, i) => {
+        const share = d.share;
+        const pct = share == null ? "—" : `${Math.round(share * 100)}%`;
+        const color = ["#7C5CFC", "#3B82F6", "#22C55E", "#8B5CF6", "#EF4444"][i % 5];
+        const icon = [
+          '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg>',
+          '<svg viewBox="0 0 24 24"><path d="M4 12h6l2-5 3 10 2-5h3"/></svg>',
+          '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 10h6M9 14h4"/></svg>',
+          '<svg viewBox="0 0 24 24"><path d="M14 6l4 4-8 8H6v-4l8-8Z"/><path d="M12 8l4 4"/></svg>',
+          '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
+        ][i % 5];
+        return `<li class="dim-item">${icon}<div class="dim-body"><span class="dim-name">${esc(d.name)}</span><div class="dim-bar"><span style="width:${share == null ? 0 : share * 100}%;background:${color}"></span></div></div><span class="dim-pct">${pct}</span></li>`;
+      }).join("")
+    : `<li class="muted small">No evaluated candidates yet — search dimensions appear after a run.</li>`;
+
+  renderCandidates(o);
+  renderActivity(o);
+  renderClimb(o);
+
+  $("metricsProvenance").textContent = m.source
+    ? `Source: ${m.source}. ignored/inconclusive stay separate from blocked; technical failures are not security outcomes.`
+    : "Metrics are derived from the latest persisted run record. Unavailable values stay unavailable.";
+
+  const runForAssistant = run || active;
+  const assistantLine = $("runAssistant");
+  if (runForAssistant && runForAssistant.assistant) {
+    const a = runForAssistant.assistant;
+    const calls = a.model_calls_consumed ?? 0;
+    const budgetText = a.model_request_budget == null ? "no request budget" : `${calls}/${a.model_request_budget} model requests`;
+    const why = calls === 0
+      ? " — no request was made (the bounded run ended before a model-proposal boundary)."
+      : "";
+    assistantLine.textContent = `Assistant: ${a.provider || "none"} (${a.kind || "unknown"})` +
+      (a.model ? ` · ${a.model}` : "") +
+      ` · ${budgetText}` +
+      (a.timeout_seconds ? ` · timeout ${a.timeout_seconds}s` : "") + why;
+  } else if (runForAssistant) {
+    assistantLine.textContent = "Assistant: none configured for this run (no model requests).";
+  } else {
+    assistantLine.textContent = "";
+  }
+
+  drawChart();
+}
+
+function strategyLabel(ladder) {
+  if (!Array.isArray(ladder) || !ladder.length) return "—";
+  return ladder.map((s) => `${s.category || "?"} L${s.sophistication_level ?? "?"}`).join(" → ");
+}
+
+function renderClimb(o) {
+  const run = o.run || o.active_run || {};
+  const history = Array.isArray(run.history) ? run.history : (o.history || []);
+  const decisions = history.filter((h) => h && h.candidate_ladder);
+  $("climbMeta").textContent = decisions.length
+    ? `${decisions.length} evaluated · iteration ${run.iteration ?? "—"}`
+    : "No data";
+  $("climbBody").innerHTML = decisions.length
+    ? decisions.slice(-12).map((h) => {
+        const accepted = h.improved === true;
+        const delta = h.delta == null ? "—" : `${h.delta > 0 ? "+" : ""}${Number(h.delta).toFixed(2)}`;
+        return `<tr>
+          <td>${esc(h.iteration ?? "—")}</td>
+          <td><code>${esc(strategyLabel(h.candidate_ladder))}</code></td>
+          <td>${h.parent_category_best_asr == null ? "unavailable" : Number(h.parent_category_best_asr).toFixed(2)}</td>
+          <td>${h.asr == null ? "unavailable" : Number(h.asr).toFixed(2)}</td>
+          <td>${accepted ? '<span class="badge green">accepted</span>' : '<span class="badge slate">rejected</span>'}</td>
+          <td>${esc(delta)}</td>
+        </tr>`;
+      }).join("")
+    : `<tr><td colspan="6" class="empty">No candidate decisions yet.</td></tr>`;
+
+  const confirmations = Array.isArray(run.post_acceptance_executions)
+    ? run.post_acceptance_executions
+    : [];
+  $("confirmList").innerHTML = confirmations.length
+    ? confirmations.map((c) => {
+        if (!c.executed_after_acceptance) {
+          return `<li><strong>${esc(c.accepted_candidate_id || "accepted strategy")}</strong> was not re-executed — ${esc(c.skipped_reason || "reason not recorded")}</li>`;
+        }
+        const outcomes = Object.entries(c.outcomes || {}).map(([k, v]) => `${k} ${v}`).join(", ") || "no outcome";
+        return `<li><strong>${esc(c.accepted_candidate_id || "accepted strategy")}</strong> re-executed after acceptance · ASR ${c.asr == null ? "unavailable" : Number(c.asr).toFixed(2)} · ${esc(outcomes)} · <code>${esc(c.confirmation_strategy_id || "")}</code></li>`;
+      }).join("")
+    : `<li class="muted small">No accepted strategy in the latest run.</li>`;
+
+  const proposals = Array.isArray(run.model_suggestions) ? run.model_suggestions : [];
+  $("proposalMeta").textContent = proposals.length ? `${proposals.length} request(s)` : "No data";
+  $("proposalList").innerHTML = proposals.length
+    ? proposals.map((p) => {
+        const tokens = p.token_counts
+          ? `${p.token_counts.total_tokens ?? "?"} tokens (${p.token_counts.prompt_tokens ?? "?"}/${p.token_counts.completion_tokens ?? "?"})`
+          : "tokens unavailable";
+        const status = p.rejection_reason
+          ? `rejected: ${esc(p.rejection_reason)}`
+          : p.accepted
+            ? "entered evaluation"
+            : "not selected";
+        return `<li><strong>${esc(p.provider || "provider not recorded")}</strong>${p.model ? ` · ${esc(p.model)}` : ""} · ${esc(status)}
+          <div class="fineprint">proposal: <code>${esc(strategyLabel(p.suggested_ladder))}</code></div>
+          <div class="fineprint">request ${esc(p.request_id || "—")} · ${p.latency_ms == null ? "latency unavailable" : `${Number(p.latency_ms).toFixed(0)} ms`} · ${esc(tokens)} · provenance ${esc(p.output_provenance || "—")}</div>
+          ${p.rationale ? `<div class="fineprint">${esc(p.rationale)}</div>` : ""}</li>`;
+      }).join("")
+    : `<li class="muted small">No model request recorded for the latest run.</li>`;
+
+  $("enforcementNote").textContent = decisions.length
+    ? "Search-time defense is evaluated after the target action. A denial there is detection, not prevention; observed violations are scored as successes. Use Defenses to run the independent, pre-execution replay."
+    : "";
+}
+
+function bucketBadge(bucket) {
+  const map = {
+    success: ["green", "Successful"],
+    blocked: ["blue", "Blocked"],
+    ignored: ["slate", "Inconclusive"],
+    inconclusive: ["slate", "Inconclusive"],
+    technical_fail: ["red", "Technical"],
+    unclassified: ["orange", "Unclassified"],
+  };
+  const [cls, label] = map[bucket] || ["slate", bucket];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+function renderCandidates(o) {
+  const body = $("candidateBody");
+  const candidates = (o.candidates || []).slice(-6).reverse();
+  $("recentMeta").textContent = o.candidates?.length
+    ? `${o.candidates.length} persisted`
+    : "No data";
+  if (!candidates.length) {
+    body.innerHTML = `<tr><td colspan="6" class="empty">No candidates evaluated yet.</td></tr>`;
+    return;
+  }
+  body.innerHTML = candidates.map((c, idx) => {
+    const bucket = dominantBucket(c.outcomes);
+    return `<tr>
+      <td>${idx + 1}</td>
+      <td>${esc(objectiveLabel(c.objective))}</td>
+      <td>${esc((c.dimensions || [])[0] || "—")}</td>
+      <td>${bucketBadge(bucket)}</td>
+      <td>${c.asr == null ? "—" : Number(c.asr).toFixed(2)}</td>
+      <td>${c.created_at ? clockTime(c.created_at) : "not recorded"}</td>
+    </tr>`;
+  }).join("");
+}
+
+function objectiveLabel(value) {
+  if (!value) return "—";
+  const objectives = state.overview?.taxonomy?.objectives || [];
+  const match = objectives.find((x) => x.id === value || x.name === value);
+  return match ? match.name : value;
+}
+
+function dominantBucket(outcomes) {
+  if (!outcomes) return "unclassified";
+  if (outcomes.success > 0) return "success";
+  if (outcomes.blocked > 0) return "blocked";
+  if (outcomes.technical_fail > 0) return "technical_fail";
+  if (outcomes.ignored > 0) return "ignored";
+  return "unclassified";
+}
+
+function renderActivity(o) {
+  const list = $("activityList");
+  const items = o.activity || [];
+  $("activityMeta").textContent = items.length ? `${items.length} events` : "No data";
+  if (!items.length) {
+    list.innerHTML = `<li class="muted small">No persisted activity.</li>`;
+    return;
+  }
+  const icons = {
+    candidate: ["purple", '<svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></svg>'],
+    run: ["blue", '<svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>'],
+    defense: ["green", '<svg viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4 3 7.6 7 9 4-1.4 7-5 7-9V6l-7-3Z"/></svg>'],
+  };
+  list.innerHTML = items.map((a) => {
+    const [cls, icon] = icons[a.kind] || ["orange", '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>'];
+    return `<li class="act-item">
+      <span class="act-icon ${cls}">${icon}</span>
+      <div><div class="act-title">${esc(a.title)}</div><div class="act-detail">${esc(a.detail || "")}</div></div>
+      <span class="act-time">${esc(timeAgo(a.at))}</span>
+    </li>`;
+  }).join("");
+}
+
+/* ---------------- chart ---------------- */
+
+function drawChart() {
+  const canvas = $("asrChart");
+  if (!canvas) return;
+  const cssWidth = canvas.clientWidth || 640;
+  const cssHeight = canvas.clientHeight || 190;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const history = (state.overview?.history || []).filter((h) => h && h.asr != null);
+  const empty = $("chartEmpty");
+  const paintEmpty = (message) => {
+    if (empty) { empty.hidden = false; empty.textContent = message; }
+    canvas.style.visibility = "hidden";
+  };
+  if (!history.length) {
+    paintEmpty("No measured ASR history yet — run an experiment against a target.");
+    return;
+  }
+  if (empty) empty.hidden = true;
+  canvas.style.visibility = "visible";
+
+  const pad = { top: 12, right: 10, bottom: 32, left: 30 };
+  const w = cssWidth - pad.left - pad.right;
+  const h = cssHeight - pad.top - pad.bottom;
+
+  ctx.strokeStyle = "#1B2740";
+  ctx.lineWidth = 1;
+  ctx.font = "9px ui-monospace, monospace";
+  ctx.fillStyle = "#7F8AA3";
+  ctx.textAlign = "right";
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+    const y = pad.top + h - v * h;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + w, y); ctx.stroke();
+    ctx.fillText(v.toFixed(2), pad.left - 5, y + 3);
+  }
+
+  const xs = (i) => pad.left + (history.length === 1 ? w / 2 : (w / (history.length - 1)) * i);
+  const ys = (v) => pad.top + h - Math.max(0, Math.min(1, Number(v))) * h;
+
+  // area
+  const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + h);
+  gradient.addColorStop(0, "rgba(124,92,252,0.35)");
+  gradient.addColorStop(1, "rgba(124,92,252,0.02)");
+  ctx.beginPath();
+  ctx.moveTo(xs(0), pad.top + h);
+  history.forEach((p, i) => ctx.lineTo(xs(i), ys(p.asr)));
+  ctx.lineTo(xs(history.length - 1), pad.top + h);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  // line
+  ctx.beginPath();
+  history.forEach((p, i) => {
+    const x = xs(i), y = ys(p.asr);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = "#A78BFA";
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  // points
+  history.forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(xs(i), ys(p.asr), 2.2, 0, Math.PI * 2);
+    ctx.fillStyle = "#C4B5FD";
+    ctx.fill();
+  });
+
+  // x labels (evaluation index)
+  ctx.fillStyle = "#7F8AA3";
+  ctx.textAlign = "center";
+  const step = Math.max(1, Math.ceil(history.length / 8));
+  history.forEach((p, i) => {
+    if (i % step !== 0 && i !== history.length - 1) return;
+    ctx.fillText(String(i + 1), xs(i), cssHeight - 16);
+  });
+  ctx.fillText("Attempts", pad.left + w / 2, cssHeight - 4);
+}
+
+/* ---------------- agents page ---------------- */
+
+function renderAgents(o) {
+  const host = $("agentMethodList");
+  if (!host) return;
+  const connections = o.connections || [];
+  host.innerHTML = connections.map((c) => {
+    const unavailable = c.status !== "available";
+    const fields = (c.fields || []).map((f) => {
+      const value = c.config?.[f.name] ?? "";
+      const type = f.name === "timeout_seconds" ? "number" : "text";
+      return `<label>${esc(f.label)}
+        <input data-field="${esc(f.name)}" type="${type}" placeholder="${esc(f.placeholder || "")}"
+          value="${esc(f.name === "auth_header" ? "" : value)}"
+          ${unavailable ? "disabled" : ""}>
+      </label>`;
+    }).join("");
+    const status = unavailable
+      ? `<span class="dot warn"></span> Unavailable — ${esc(c.status_label || "not implemented")}`
+      : c.connected
+        ? `<span class="dot ok"></span> Connected${c.selected ? " · selected" : ""}`
+        : c.last_validation && !c.last_validation.ok
+          ? `<span class="dot bad"></span> Validation failed: ${esc(c.last_validation.error || "unknown")}`
+          : `<span class="dot"></span> ${esc(c.status_label)}`;
+    const actions = unavailable
+      ? `<div class="unavailable-note">${esc(c.reason || "Not implemented")}</div>`
+      : `<div class="agent-method-actions">
+           <button class="btn primary" data-agent-connect="${esc(c.method)}">Validate &amp; connect</button>
+           <button class="btn secondary" data-agent-select="${esc(c.method)}" ${c.connected && !c.selected ? "" : "disabled"}>Use</button>
+           <button class="btn secondary" data-agent-clear="${esc(c.method)}" ${c.config ? "" : "disabled"}>Remove</button>
+         </div>`;
+    return `<div class="card agent-method${unavailable ? " unavailable" : ""}" data-method-card="${esc(c.method)}">
+      <div class="agent-method-head">
+        <div class="method-icon ${c.method === "http_api" ? "blue" : "teal"}">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6"/></svg>
+        </div>
+        <div><h3>${esc(c.display_name)}</h3><p>${esc(c.subtitle || "")} · ${esc(c.description)}</p></div>
+      </div>
+      <div class="status-line">${status}</div>
+      <div class="form-fields">${fields}</div>
+      ${!unavailable && (c.limitations || []).length ? `<div class="fineprint">${esc(c.limitations.join(" · "))}</div>` : ""}
+      ${actions}
+    </div>`;
+  }).join("");
+}
+
+function collectionConfig(card) {
+  const config = {};
+  card.querySelectorAll("[data-field]").forEach((input) => {
+    const name = input.dataset.field;
+    if (name === "auth_header") return; // read separately below
+    if (input.value !== "") config[name] = input.value;
+  });
+  return config;
+}
+
+document.addEventListener("click", async (event) => {
+  const connectBtn = event.target.closest("[data-agent-connect]");
+  if (connectBtn) {
+    const method = connectBtn.dataset.agentConnect;
+    const card = connectBtn.closest("[data-method-card]");
+    const config = collectionConfig(card);
+    const authInput = card.querySelector('[data-field="auth_header"]');
+    if (authInput && authInput.value.trim()) config.auth_header = authInput.value.trim();
+    connectBtn.disabled = true;
+    connectBtn.textContent = "Probing…";
+    try {
+      const result = await api("/api/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "connect", method, config }),
+      });
+      toast(result.ok ? `${method} validated and connected.` : `Validation failed: ${result.probe?.error || "unknown"}`);
+      await loadOverview();
+    } catch (err) {
+      toast(`Connection failed: ${err.message}`, true);
+    } finally {
+      connectBtn.disabled = false;
+      connectBtn.textContent = "Validate & connect";
+    }
+    return;
+  }
+
+  const selectBtn = event.target.closest("[data-agent-select]");
+  if (selectBtn) {
+    try {
+      await api("/api/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "select", method: selectBtn.dataset.agentSelect }),
+      });
+      await loadOverview();
+      toast("Active connection updated.");
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+
+  const clearBtn = event.target.closest("[data-agent-clear]");
+  if (clearBtn) {
+    try {
+      await api("/api/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clear", method: clearBtn.dataset.agentClear }),
+      });
+      await loadOverview();
+      toast("Connection removed.");
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+
+  const methodBtn = event.target.closest("[data-connect]");
+  if (methodBtn) {
+    // Agents is the canonical place to configure a connection; the Experiments
+    // cards are a shortcut to it, not a second copy of the same form.
+    const method = methodBtn.dataset.connect;
+    setPage("agents");
+    const card = document.querySelector(`[data-method-card="${method}"]`);
+    if (card) {
+      card.scrollIntoView({ block: "center" });
+      card.classList.add("highlight");
+      setTimeout(() => card.classList.remove("highlight"), 1600);
+      const first = card.querySelector("input:not([disabled])");
+      if (first) first.focus();
+    }
+  }
+});
+
+/* ---------------- experiment modal ---------------- */
+
+function updateProviderHint() {
+  const hint = $("cfgProviderHint");
+  if (!hint) return;
+  const mode = $("cfgMode").value;
+  const provider = $("cfgProvider").value;
+  if (mode !== "feedback") {
+    hint.textContent = "Greedy hill climbing makes no model requests — candidates are structural mutations. Choose feedback-guided search to use this provider.";
+    return;
+  }
+  const map = {
+    ollama: "Ollama will be called for advisory strategy suggestions, bounded by the model-request budget. Suggestions can never set an outcome.",
+    rules_only: "Rules-only ranking: feedback-guided search runs with zero model requests.",
+    none: "Statistics-only ranking: no model requests are made.",
+    fake: "Offline deterministic double for tests only — no real model is called.",
+  };
+  hint.textContent = map[provider] || "";
+}
+
+function openExperimentModal() {
+  const o = state.overview;
+  if (!o) return;
+  const objective = $("cfgObjective");
+  objective.innerHTML =
+    `<option value="all">All three objectives (fixed set)</option>` +
+    (o.taxonomy.objectives || []).map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+  $("cfgProvider").value = "ollama";
+  const conn = o.connection;
+  updateProviderHint();
+  $("cfgTargetLine").textContent = conn && conn.ready
+    ? `Target: ${conn.display_name} (${conn.config?.target_id || conn.config?.endpoint_url || "validated"}) — validated connection.`
+    : "Target: no user agent connected — the run uses the explicitly-labelled seeded stand-in. Connect an agent in Agents to attack a real target.";
+  $("expResult").hidden = true;
+  $("expModal").hidden = false;
+}
+
+function closeExperimentModal() { $("expModal").hidden = true; }
+
+$("newExperimentBtn").addEventListener("click", openExperimentModal);
+$("cfgMode").addEventListener("change", updateProviderHint);
+$("cfgProvider").addEventListener("change", updateProviderHint);
+$("expModalClose").addEventListener("click", closeExperimentModal);
+$("expModalCancel").addEventListener("click", closeExperimentModal);
+$("expModal").addEventListener("click", (e) => {
+  if (e.target === $("expModal")) closeExperimentModal();
+});
+
+function experimentPayload() {
+  const o = state.overview;
+  const selected = $("cfgObjective").value;
+  const categories = selected === "all"
+    ? (o.taxonomy.objectives || []).map((x) => x.name)
+    : [((o.taxonomy.objectives || []).find((x) => x.id === selected) || {}).name].filter(Boolean);
+  return {
+    mode: $("cfgMode").value,
+    defense: $("cfgDefense").value,
+    provider: $("cfgProvider").value,
+    episodes: parseInt($("cfgEpisodes").value, 10),
+    iterations: parseInt($("cfgIterations").value, 10),
+    total_episode_budget: parseInt($("cfgBudget").value, 10),
+    model_request_budget: parseInt($("cfgModelBudget").value, 10),
+    attack_categories: categories,
+    background: true,
+  };
+}
+
+/* ---- prominent Run Experiment button (always visible on Experiments) ---- */
+const runExperimentBtn = $("runExperimentBtn");
+if (runExperimentBtn) {
+  runExperimentBtn.addEventListener("click", () => {
+    // Prevent duplicate starts: if the harness is already running, surface it
+    // instead of opening a second configuration path.
+    const o = state.overview;
+    if (o && (o.lifecycle?.running || o.lifecycle?.phase === "attacker")) {
+      toast("An attacker run is already in progress — stop it before starting another.", true);
+      return;
+    }
+    openExperimentModal();
+  });
+}
+
+$("expValidateBtn").addEventListener("click", async () => {
+  const box = $("expResult");
+  box.hidden = false;
+  box.className = "probe-result";
+  box.textContent = "Validating target and provider — no run is started…";
+  const payload = experimentPayload();
+  try {
+    const data = await api("/api/adaptive/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: payload.provider }),
+    });
+    const targetLine = data.target
+      ? `${data.target.id || data.target.kind || "seeded"}${
+          data.target.execution_mode ? ` (${data.target.execution_mode})` : ""
+        }`
+      : "seeded stand-in";
+    const provider = data.provider || {};
+    box.className = "probe-result " + (data.ok ? "ok" : "bad");
+    box.innerHTML = data.ok
+      ? `<strong>Configuration valid.</strong><br>Target: ${esc(targetLine)} · provider ${esc(provider.provider)} (${esc(provider.kind)})${
+          provider.model ? ` · ${esc(provider.model)}` : ""
+        }`
+      : `<strong>Validation failed.</strong><br>${esc((data.errors || []).join(" · "))}`;
+  } catch (err) {
+    box.className = "probe-result bad";
+    box.textContent = err.message;
+  }
+});
+
+$("expStartBtn").addEventListener("click", async () => {
+  if (state.starting) return;
+  const box = $("expResult");
+  const payload = experimentPayload();
+  const numeric = ["episodes", "iterations", "total_episode_budget", "model_request_budget"];
+  for (const k of numeric) {
+    if (!Number.isFinite(payload[k])) {
+      box.hidden = false;
+      box.className = "probe-result bad";
+      box.textContent = `Invalid ${k.replace(/_/g, " ")} — enter a whole number.`;
+      return;
+    }
+  }
+  state.starting = true;
+  $("expStartBtn").disabled = true;
+  box.hidden = false;
+  box.className = "probe-result";
+  box.textContent = "Starting the bounded attacker run…";
+  try {
+    const data = await api("/api/adaptive/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    box.className = "probe-result ok";
+    box.innerHTML = `<strong>Attacker run started</strong> — ${esc(data.run?.run_id || "run")}. Defense evaluation stays locked until it completes.`;
+    closeExperimentModal();
+    await loadOverview();
+  } catch (err) {
+    box.className = "probe-result bad";
+    box.textContent = `Run rejected: ${err.message}`;
+  } finally {
+    state.starting = false;
+    $("expStartBtn").disabled = false;
+  }
+});
+
+$("stopBtn").addEventListener("click", async () => {
+  try {
+    await api("/api/adaptive/stop", { method: "POST" });
+    toast("Stop requested — the harness stops after the current episode.");
+    await loadOverview();
+  } catch (err) { toast(err.message, true); }
+});
+
+/* ---------------- defenses ---------------- */
+
+// Defense evaluation is a SEPARATE operator action. This page only reads
+// completed campaigns; it never starts anything until Run Defense is pressed.
+
+const DEFENSE_JOB_KEY = "nemesis.activeDefenseJob";
+
+state.defenseCampaigns = [];
+state.defenseRunId = null;
+state.defenseCaseIds = new Set();
+state.defenseJob = null;
+state.defensePollTimer = null;
+
+function defenseCampaign() {
+  return (state.defenseCampaigns || []).find((c) => c.run_id === state.defenseRunId) || null;
+}
+
+function usableCaseIds(campaign) {
+  return (campaign?.cases || [])
+    .filter((c) => c.usable && c.case_id)
+    .map((c) => String(c.case_id));
+}
+
+function selectDefenseCampaign(runId, { reset = false } = {}) {
+  state.defenseRunId = runId || null;
+  const campaign = defenseCampaign();
+  const usable = usableCaseIds(campaign);
+  if (reset || !state.defenseCaseIds.size) {
+    state.defenseCaseIds = new Set(usable);
+  } else {
+    // Never keep a selection that belongs to a different campaign.
+    const valid = new Set((campaign?.cases || []).map((c) => String(c.case_id)));
+    state.defenseCaseIds = new Set(
+      [...state.defenseCaseIds].filter((id) => valid.has(id) && usable.includes(id))
+    );
+    if (!state.defenseCaseIds.size) state.defenseCaseIds = new Set(usable);
+  }
+}
+
+async function loadDefenseCampaigns() {
+  try {
+    const data = await api("/api/adaptive/defense_campaigns");
+    state.defenseCampaigns = data.campaigns || [];
+    const known = state.defenseCampaigns.some((c) => c.run_id === state.defenseRunId);
+    if (!known) {
+      // Prefer a campaign whose saved cases came from a live/HTTP target over
+      // an older fixture campaign. Both remain selectable and are labelled;
+      // the default must not silently put fixture evidence in the demo slot.
+      const eligible = state.defenseCampaigns.filter((c) => c.eligible);
+      const preferred =
+        eligible.find((c) => c.target_identity && c.target_identity.kind === "http_api") ||
+        eligible.find((c) => c.target_identity && c.target_identity.kind !== "fixture") ||
+        eligible[0] ||
+        state.defenseCampaigns[0] ||
+        null;
+      selectDefenseCampaign(preferred ? preferred.run_id : null, { reset: true });
+    }
+    renderDefenses(state.overview);
+  } catch (err) {
+    const box = $("barrierBox");
+    if (box) {
+      box.className = "barrier blocked";
+      box.textContent = `Could not load completed attacker campaigns: ${err.message}`;
+    }
+  }
+}
+
+// Classify a defense-evaluation entry into one explicit, user-readable state
+// so the dashboard never conflates "nothing was replayed" with a real result.
+function defenseState(entry) {
+  const r = (entry && entry.result) || {};
+  const explicit = entry && entry.evaluation_state;
+  const explicitStates = {
+    eligible: { label: "Eligible to evaluate", cls: "ok" },
+    running: { label: "Evaluation running", cls: "warn" },
+    completed_with_evidence: { label: "Completed — evidence recorded", cls: "ok" },
+    inconclusive: { label: "Inconclusive", cls: "warn" },
+    unavailable: { label: "Unavailable — missing prerequisite", cls: "warn" },
+    technical_failure: { label: "Technical failure", cls: "bad" },
+    interrupted: { label: "Interrupted — no verdict", cls: "bad" },
+  };
+  if (explicit && explicitStates[explicit]) return explicitStates[explicit];
+  if (r.technical_failure > 0 && !r.episodes_evaluated) {
+    return { label: "Technical failure", cls: "bad" };
+  }
+  if (r.unavailable || !r.episodes_evaluated) {
+    return { label: "Unavailable", cls: "warn" };
+  }
+  if (r.verdict === "inconclusive" || r.verdict === "mixed") {
+    return { label: "Inconclusive", cls: "warn" };
+  }
+  if (r.verdict === "confirmed_success") {
+    return { label: "Completed — attack confirmed", cls: "ok" };
+  }
+  if (r.verdict === "confirmed_blocked") {
+    return { label: "Completed — attack blocked", cls: "ok" };
+  }
+  return { label: `Completed — ${esc(String(r.verdict || "done"))}`, cls: "ok" };
+}
+
+function defenseStatePill(entry) {
+  const { label, cls } = defenseState(entry);
+  return `<span class="pill sm ${cls}">${esc(label)}</span>`;
+}
+
+function defenseEntryHtml(entry) {
+  const r = entry.result || {};
+  const s = r.states || {};
+  const target = entry.replay_target || entry.target_snapshot || {};
+  const episodes = (r.episodes || []).map((ep) => {
+    const executed = ep.action_executed === true
+      ? "executed"
+      : ep.action_executed === false
+        ? "not executed"
+        : "unknown";
+    const enforced = ep.enforcement_before_execution === true
+      ? "yes"
+      : ep.enforcement_before_execution === false
+        ? "no"
+        : "unknown";
+    return `<tr>
+      <td><code>${esc(ep.source_case_id || "unlinked")}</code></td>
+      <td>${esc(ep.state)}</td>
+      <td>${esc(executed)}</td>
+      <td>${esc(enforced)}</td>
+      <td>${esc(ep.evidence)}</td>
+    </tr>`;
+  }).join("");
+  const evidenceCases = (s.confirmed_success || 0) + (s.confirmed_blocked || 0);
+  const rate = evidenceCases
+    ? `${(s.confirmed_blocked || 0)} blocked / ${evidenceCases} evidence-backed`
+    : "n/a (no evidence-backed case)";
+  const selected = (entry.selected_case_ids || []).length
+    ? entry.selected_case_ids.join(", ")
+    : "—";
+  return `
+    <div class="line">${defenseStatePill(entry)}</div>
+    <div class="line">Source attacker run: <code>${esc(entry.source_run_id || "—")}</code> · candidate <code>${esc(entry.candidate_id || "—")}</code></div>
+    <div class="line">Selected saved cases: <code>${esc(selected)}</code></div>
+    <div class="line">Original target: <code>${esc(target.target_id || "no snapshot")}</code> · kind ${esc(target.kind || "—")} · available ${entry.target_available === false ? "<strong>no</strong>" : "yes"}</div>
+    <div class="line">Defense: ${esc(entry.against || "—")} · ${esc(entry.defense_implementation?.display_name || "")} (${esc(entry.defense_implementation?.implementation_type || "")})</div>
+    <div class="line">Verdict: <strong>${esc(r.verdict || "—")}</strong>${r.unavailable ? " — nothing was replayed" : ""} · ${esc(rate)}</div>
+    <div class="line">Success ${na(s.confirmed_success)} · Blocked ${na(s.confirmed_blocked)} · Inconclusive ${na(s.inconclusive)} · Technical ${na(s.technical_failure)} · replayed ${na(r.episodes_evaluated)}</div>
+    <div class="line">Ground truth: ${esc(r.ground_truth || "not_evaluated")} · saved cases available: ${na(r.source_cases_available)}</div>
+    ${episodes ? `<div class="table-scroll" style="margin-top:8px"><table class="table"><thead><tr><th>Case</th><th>State</th><th>Action</th><th>Enforced before execution</th><th>Evidence</th></tr></thead><tbody>${episodes}</tbody></table></div>` : `<div class="line">No replayed episodes.</div>`}
+    ${(r.limitations || []).map((l) => `<div class="limit">Limitation: ${esc(l)}</div>`).join("")}`;
+}
+
+function renderDefenseJob() {
+  const box = $("defenseJobStatus");
+  if (!box) return;
+  const job = state.defenseJob;
+  if (!job) {
+    box.className = "defense-result muted small";
+    box.textContent = "No defense job in this session.";
+    return;
+  }
+  const p = job.progress || {};
+  const target = job.target_identity || job.result?.replay_target || {};
+  const warnings = job.warnings || [];
+  const errors = job.errors || (job.error ? [job.error] : []);
+  box.className = "defense-result";
+  box.innerHTML = `
+    <div class="line"><span class="pill sm ${["queued", "running"].includes(job.state) ? "warn" : job.state === "technical_failure" || job.state === "interrupted" ? "bad" : "ok"}">${esc(job.state)}</span>
+      Job <code>${esc(job.job_id || job.evaluation_id)}</code> · created ${esc(timeAgo(job.created_at || job.queued_at))}</div>
+    <div class="line">Source run <code>${esc(job.source_run_id || "—")}</code> · defense ${esc(job.defense || "—")} · cases ${esc((job.case_ids || []).length || "—")}</div>
+    <div class="line">Original target: <code>${esc(target.target_id || "resolving…")}</code> · kind ${esc(target.kind || "—")}</div>
+    <div class="line">Progress: ${esc(p.phase || "queued")} · replayed ${na(p.cases_replayed)} / ${na(p.cases_total)}${p.last_case_id ? ` · last <code>${esc(p.last_case_id)}</code>` : ""}</div>
+    ${warnings.map((w) => `<div class="limit">Warning: ${esc(w)}</div>`).join("")}
+    ${errors.map((e) => `<div class="limit" style="color:#FCA5A5">Error: ${esc(e)}</div>`).join("")}
+    ${job.result ? `<hr style="border-color:var(--border-soft);margin:10px 0">${defenseEntryHtml(job.result)}` : ""}`;
+}
+
+function renderDefenses(o) {
+  const barrier = $("barrierBox");
+  if (!barrier) return;
+  const lifecycle = (o && o.lifecycle) || {};
+  const campaign = defenseCampaign();
+  if (lifecycle.running) {
+    barrier.className = "barrier blocked";
+    barrier.textContent = "An attacker search is running. Defense is a separate operation and can start only after it terminates; nothing is queued automatically.";
+  } else if (!state.defenseCampaigns.length) {
+    barrier.className = "barrier blocked";
+    barrier.textContent = "No completed attacker campaign is available. Finish an attacker run first; its saved cases will then appear here.";
+  } else if (campaign && campaign.eligible) {
+    barrier.className = "barrier ok";
+    barrier.textContent = `Campaign ${campaign.run_id} completed with ${campaign.usable_cases} eligible saved case(s). Select cases and press Run Defense — nothing starts automatically.`;
+  } else if (campaign) {
+    barrier.className = "barrier blocked";
+    barrier.textContent = `Campaign ${campaign.run_id} has no eligible saved case: ${campaign.reason || "no confirmed successful saved case"}`;
+  } else {
+    barrier.className = "barrier blocked";
+    barrier.textContent = "Select a completed attacker campaign.";
+  }
+
+  const campaignSelect = $("defenseCampaignSelect");
+  if (campaignSelect) {
+    const current = state.defenseRunId || "";
+    campaignSelect.innerHTML = state.defenseCampaigns.length
+      ? state.defenseCampaigns.map((c) =>
+          `<option value="${esc(c.run_id)}">${esc(c.run_id)} · ${esc(c.usable_cases)} eligible · ${esc(timeAgo(c.finished_at) || "—")}</option>`
+        ).join("")
+      : `<option value="">— no completed campaign —</option>`;
+    if (current && [...campaignSelect.options].some((op) => op.value === current)) {
+      campaignSelect.value = current;
+    }
+  }
+
+  const meta = $("defenseCampaignMeta");
+  if (meta) {
+    if (!campaign) {
+      meta.textContent = "No campaign selected.";
+    } else {
+      const t = campaign.target_identity || {};
+      const targetText = t.target_id
+        ? `${t.target_id} (${t.kind || "unknown kind"})`
+        : "no persisted target snapshot — replay will be unavailable";
+      meta.innerHTML = `Candidate <code>${esc(campaign.candidate_id)}</code> · search-time defense ${esc(campaign.search_defense || "—")} · original target <code>${esc(targetText)}</code> · saved cases ${na(campaign.cases_available)} · eligible ${na(campaign.usable_cases)}${campaign.target_snapshot_present === false ? " · <span style=\"color:#FDBA74\">target snapshot missing</span>" : ""}`;
+    }
+  }
+
+  const caseBox = $("defenseCaseSelect");
+  if (caseBox) {
+    const cases = campaign?.cases || [];
+    caseBox.innerHTML = cases.length
+      ? cases.map((c) => {
+          const cid = String(c.case_id || "");
+          const checked = state.defenseCaseIds.has(cid) ? "checked" : "";
+          const disabled = c.usable ? "" : "disabled";
+          return `<label class="case-choice ${c.usable ? "" : "ineligible"}">
+            <input type="checkbox" data-defense-case="${esc(cid)}" ${checked} ${disabled}>
+            <span>
+              <span class="case-id">${esc(cid || "no stable id")}</span>
+              <span class="case-meta"> · episode ${na(c.episode)} · outcome ${esc(c.outcome || "—")} · decision ${esc(c.defense_decision || "not observable")}</span>
+              ${c.usable ? "" : `<div class="case-why">Excluded: ${esc(c.unusable_reason || "not a replayable confirmed case")}</div>`}
+            </span>
+          </label>`;
+        }).join("")
+      : `<div class="muted small">${campaign ? "This campaign has no saved attack cases." : "Choose a completed campaign to list its saved cases."}</div>`;
+  }
+
+  const selectionMeta = $("defenseSelectionMeta");
+  const usable = usableCaseIds(campaign);
+  if (selectionMeta) {
+    selectionMeta.textContent = `${state.defenseCaseIds.size} selected / ${usable.length} eligible`;
+  }
+
+  const exclusions = $("defenseExclusions");
+  if (exclusions) {
+    const unusable = (campaign?.cases || []).filter((c) => !c.usable);
+    exclusions.innerHTML = unusable.length
+      ? unusable.map((c) => `Excluded <code>${esc(c.case_id || "no-id")}</code>: ${esc(c.unusable_reason || "not replayable")}`).join("<br>")
+      : "";
+  }
+
+  const defSel = $("defenseSelect");
+  if (defSel && !defSel.options.length) {
+    defSel.innerHTML = (o?.defense?.catalog || []).map((d) =>
+      `<option value="${esc(d.defense_id)}" ${d.available ? "" : "disabled"}>${esc(d.display_name)}${d.available ? "" : " — UNAVAILABLE"}</option>`
+    ).join("");
+  }
+  const runBtn = $("runDefenseBtn");
+  if (runBtn) {
+    runBtn.disabled = !campaign || !campaign.eligible || state.defenseCaseIds.size === 0;
+  }
+
+  const catalog = $("defenseCatalog");
+  if (catalog) {
+    catalog.innerHTML = (o?.defense?.catalog || []).map((d) => `
+      <div class="card defense-card">
+        <h4>${esc(d.display_name)}</h4>
+        <div class="meta">${esc(d.defense_id)} · ${esc(d.implementation_type)}${d.available ? "" : " · unavailable"}</div>
+        ${d.detects ? `<p><strong>Detects:</strong> ${esc(d.detects)}</p>` : ""}
+        ${d.blocks ? `<p><strong>Blocks:</strong> ${esc(d.blocks)}</p>` : ""}
+        <div class="limits">${esc(d.does_not || "")}</div>
+        <div class="fineprint">Upstream: ${esc(d.upstream_system || "n/a")}</div>
+      </div>`).join("");
+  }
+
+  const body = $("defenseEvalBody");
+  if (body) {
+    const evals = (o?.defense?.evaluations || []).slice().reverse();
+    body.innerHTML = evals.length
+      ? evals.map((e) => {
+          const r = e.result || {};
+          const s = r.states || {};
+          return `<tr>
+            <td><code>${esc(e.source_run_id || "—")}</code></td>
+            <td><code>${esc(e.candidate_id)}</code></td>
+            <td>${esc(e.against)}</td>
+            <td>${defenseStatePill(e)}<br><span class="muted">${esc(r.verdict || "—")}</span></td>
+            <td>${na((e.selected_case_ids || []).length || r.episodes_evaluated)}</td>
+            <td>${na(s.confirmed_success)}</td>
+            <td>${na(s.confirmed_blocked)}</td>
+            <td>${na(s.inconclusive)}</td>
+            <td>${na(s.technical_failure)}</td>
+            <td>${esc(timeAgo(e.evaluated_at))}</td>
+          </tr>`;
+        }).join("")
+      : `<tr><td colspan="10" class="empty">None yet.</td></tr>`;
+  }
+  renderDefenseJob();
+}
+
+function stopDefensePolling() {
+  clearTimeout(state.defensePollTimer);
+  state.defensePollTimer = null;
+}
+
+async function pollDefenseJob(evaluationId) {
+  stopDefensePolling();
+  const terminal = new Set(["completed", "inconclusive", "unavailable", "technical_failure", "interrupted"]);
+  for (;;) {
+    let job;
+    try {
+      const response = await api(`/api/adaptive/defense_eval/status?evaluation_id=${encodeURIComponent(evaluationId)}`);
+      job = response.job;
+    } catch (err) {
+      state.defenseJob = {
+        job_id: evaluationId,
+        evaluation_id: evaluationId,
+        state: "technical_failure",
+        errors: [err.message],
+        progress: {},
+      };
+      renderDefenseJob();
+      localStorage.removeItem(DEFENSE_JOB_KEY);
+      return;
+    }
+    state.defenseJob = job;
+    renderDefenseJob();
+    if (terminal.has(job.state)) {
+      localStorage.removeItem(DEFENSE_JOB_KEY);
+      await loadDefenseCampaigns();
+      await loadOverview();
+      return;
+    }
+    await new Promise((resolve) => {
+      state.defensePollTimer = setTimeout(resolve, 1200);
+    });
+  }
+}
+
+async function restoreDefenseJob() {
+  const evaluationId = localStorage.getItem(DEFENSE_JOB_KEY);
+  if (!evaluationId) return;
+  try {
+    const response = await api(`/api/adaptive/defense_eval/status?evaluation_id=${encodeURIComponent(evaluationId)}`);
+    state.defenseJob = response.job;
+    renderDefenseJob();
+    if (["queued", "running"].includes(response.job.state)) {
+      pollDefenseJob(evaluationId);
+    } else {
+      localStorage.removeItem(DEFENSE_JOB_KEY);
+    }
+  } catch {
+    // A restart may have removed an unknown id; never invent a result or
+    // silently start a replacement job.
+    localStorage.removeItem(DEFENSE_JOB_KEY);
+  }
+}
+
+$("defenseCampaignSelect")?.addEventListener("change", (event) => {
+  selectDefenseCampaign(event.target.value, { reset: true });
+  renderDefenses(state.overview);
+});
+
+$("defenseSelectAll")?.addEventListener("click", () => {
+  state.defenseCaseIds = new Set(usableCaseIds(defenseCampaign()));
+  renderDefenses(state.overview);
+});
+
+$("defenseClearSelection")?.addEventListener("click", () => {
+  state.defenseCaseIds = new Set();
+  renderDefenses(state.overview);
+});
+
+$("defenseCaseSelect")?.addEventListener("change", (event) => {
+  const input = event.target.closest("input[data-defense-case]");
+  if (!input) return;
+  const caseId = input.dataset.defenseCase;
+  if (input.checked) state.defenseCaseIds.add(caseId);
+  else state.defenseCaseIds.delete(caseId);
+  renderDefenses(state.overview);
+});
+
+$("runDefenseBtn")?.addEventListener("click", async () => {
+  const campaign = defenseCampaign();
+  const box = $("defenseResult");
+  if (!campaign) return;
+  const caseIds = [...state.defenseCaseIds];
+  if (!caseIds.length) {
+    box.className = "defense-result";
+    box.innerHTML = `<span style="color:#FDBA74">Select at least one eligible saved case. An empty selection never starts an evaluation.</span>`;
+    return;
+  }
+  const defense = $("defenseSelect").value;
+  box.className = "defense-result";
+  box.textContent = "Starting the separate defense job…";
+  $("runDefenseBtn").disabled = true;
+  try {
+    const start = await api("/api/adaptive/defense_eval", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        run_id: campaign.run_id,
+        candidate_id: campaign.candidate_id,
+        case_ids: caseIds,
+        defense,
+      }),
+    });
+    if (!start.evaluation_id) {
+      // Inline result (sync caller): render it directly.
+      box.innerHTML = defenseEntryHtml(start);
+      await loadOverview();
+      return;
+    }
+    state.defenseJob = start.job;
+    localStorage.setItem(DEFENSE_JOB_KEY, start.evaluation_id);
+    renderDefenseJob();
+    box.className = "defense-result muted small";
+    box.textContent = "The job runs independently in the background. Refreshing this page restores the job; it does not start another one.";
+    pollDefenseJob(start.evaluation_id);
+  } catch (err) {
+    box.className = "defense-result";
+    const data = err.data || {};
+    const excluded = (data.excluded_cases || [])
+      .map((c) => `<div class="limit">Excluded <code>${esc(c.case_id || "—")}</code>: ${esc(c.exclusion_reason || c.unusable_reason || "not eligible")}</div>`)
+      .join("");
+    box.innerHTML = `<span style="color:#FCA5A5">${esc(err.message)}</span>${excluded}`;
+    $("runDefenseBtn").disabled = false;
+  }
+});
+
+/* ---------------- reports ---------------- */
+
+function renderReports(o) {
+  const body = $("runTableBody");
+  const runs = (o.reports?.runs || []).slice().reverse();
+  body.innerHTML = runs.length
+    ? runs.map((r) => `<tr>
+        <td><code>${esc(r.run_id)}</code></td>
+        <td>${statusBadge(r.status)}</td>
+        <td>${esc(r.target || "seeded stand-in")}<br><span class="muted">${esc(r.target_kind || "")}</span></td>
+        <td>${esc(r.mode || "—")}</td>
+        <td>${r.best_asr == null ? "Unavailable" : Number(r.best_asr).toFixed(2)}</td>
+        <td>${na(r.episodes_consumed)}/${na(r.total_episode_budget)}</td>
+        <td>${esc(timeAgo(r.finished_at))}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="7" class="empty">No runs persisted.</td></tr>`;
+
+  const latest = o.candidates || [];
+  const cases = latest.flatMap((c) => (c.cases || []).map((k) => ({ ...k, candidate: c.candidate_id, objective: c.objective })));
+  $("casesMeta").textContent = cases.length
+    ? `${cases.length} case(s) from the displayed candidates · ${cases.filter((c) => c.bucket === "success").length} successful`
+    : "";
+  $("caseTableBody").innerHTML = cases.length
+    ? cases.map((c) => `<tr>
+        <td><code>${esc(c.case_id || "—")}</code></td>
+        <td>${esc(c.episode)}</td>
+        <td>${bucketBadge(c.bucket)}</td>
+        <td>${esc(c.observed_outcome || "—")}</td>
+        <td>${esc(c.defense_decision || "not observable")}</td>
+        <td>${esc((c.steps || []).map((s) => s.category).join(", ") || "—")}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="6" class="empty">No saved cases.</td></tr>`;
+
+  const evals = (o?.defense?.evaluations || []).slice().reverse();
+  const dMeta = $("defenseReportMeta");
+  if (dMeta) {
+    dMeta.textContent = evals.length
+      ? `${evals.length} defense job(s) · attacker and defense metrics are kept separate`
+      : "No defense job persisted.";
+  }
+  const dBody = $("defenseReportBody");
+  if (dBody) {
+    dBody.innerHTML = evals.length
+      ? evals.map((e) => {
+          const r = e.result || {};
+          const s = r.states || {};
+          const evidence = (s.confirmed_success || 0) + (s.confirmed_blocked || 0);
+          const rate = evidence
+            ? `${s.confirmed_blocked || 0} / ${evidence}`
+            : "n/a";
+          return `<tr>
+            <td><code>${esc(e.source_run_id || "—")}</code><br><span class="muted">${esc(e.candidate_id || "")}</span></td>
+            <td>${na((e.selected_case_ids || []).length || r.episodes_evaluated)}</td>
+            <td>${esc(e.against || "—")}</td>
+            <td>${defenseStatePill(e)}</td>
+            <td>${na(s.confirmed_success)}</td>
+            <td>${na(s.confirmed_blocked)}</td>
+            <td>${na(s.inconclusive)}</td>
+            <td>${na(s.technical_failure)}</td>
+            <td>${esc(rate)}</td>
+            <td>${esc(timeAgo(e.evaluated_at))}</td>
+          </tr>`;
+        }).join("")
+      : `<tr><td colspan="10" class="empty">No defense evaluation persisted.</td></tr>`;
+  }
+
+  $("rawRun").textContent = o.run ? JSON.stringify(o.run, null, 2) : "No run persisted.";
+}
+
+function statusBadge(status) {
+  const map = {
+    completed: ["green", "completed"],
+    budget_exhausted: ["orange", "budget exhausted"],
+    stopped: ["orange", "stopped"],
+    failed: ["red", "failed"],
+    running: ["blue", "running"],
+  };
+  const [cls, label] = map[status] || ["slate", status || "unknown"];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+$("refreshBtn").addEventListener("click", () => loadOverview());
+
+/* ---------------- settings ---------------- */
+
+function renderSettings(o) {
+  const p = o.provider || {};
+  $("settingsModel").innerHTML = [
+    ["Provider", p.provider || "—"],
+    ["Endpoint", p.endpoint || "—"],
+    ["Model", p.model || p.default_model || "—"],
+    ["Service reachable", p.reachable ? "yes" : "no"],
+    ["Model installed", p.model_available ? "yes" : "no"],
+    ["Error", p.error || "—"],
+  ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("");
+
+  const limits = o.settings?.limits || {};
+  $("settingsLimits").innerHTML = [
+    ["Episodes per candidate", limits.episodes_per_candidate],
+    ["Max rounds", limits.max_rounds],
+    ["Iterations", limits.iterations],
+    ["Total episode budget", limits.total_episode_budget],
+    ["Model requests", limits.model_requests],
+    ["Approved experiment budget", limits.approved_experiment_budget],
+  ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(na(v))}</span></div>`).join("");
+
+  const cp = o.reports?.checkpoint;
+  $("settingsCheckpoint").innerHTML = cp
+    ? Object.entries(cp).map(([k, v]) =>
+        `<div class="kv"><span>${esc(k)}</span><span>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</span></div>`).join("")
+    : `<div class="kv"><span>No checkpoint</span><span>—</span></div>`;
+
+  $("settingsConnections").innerHTML = (o.connections || []).map((c) =>
+    `<div class="kv"><span>${esc(c.display_name)}</span><span>${esc(c.connected ? (c.selected ? "connected · selected" : "connected") : c.status_label)}</span></div>`
+  ).join("");
+}
+
+/* ---------------- home ---------------- */
+
+function renderHome(o) {
+  const phase = o.lifecycle?.phase || "idle";
+  const phaseLabel = {
+    idle: "Idle",
+    attacker: "Attacker running",
+    defense_ready: "Defense ready",
+    defense_completed: "Defense evaluated",
+    defense_inconclusive: "Defense inconclusive",
+    defense_unavailable: "Defense unavailable — missing prerequisite",
+    defense_failed: "Defense technical failure",
+    defense_running: "Defense evaluation running",
+    incomplete: "Incomplete",
+  }[phase] || phase;
+  const conn = o.connection;
+  $("homeStatus").innerHTML = [
+    ["Phase", phaseLabel],
+    ["Connected agent", conn && conn.ready ? conn.display_name : "none (seeded stand-in)"],
+    ["Ollama", o.provider?.ready ? "ready" : o.provider?.reachable ? "model missing" : "unreachable"],
+    ["Runs persisted", String((o.reports?.runs || []).length)],
+    ["Defense evaluations", String((o.defense.evaluations || []).length)],
+  ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("");
+
+  const homeActivity = $("homeActivity");
+  if (homeActivity) {
+    const items = (o.activity || []).slice(0, 6);
+    homeActivity.innerHTML = items.length
+      ? items.map((a) => `<li class="act-item">
+          <span class="act-dot ${a.kind === "defense" ? "green" : a.kind === "run" ? "blue" : "purple"}"></span>
+          <div><div class="act-title">${esc(a.title)}</div><div class="act-detail">${esc(a.detail || "")}</div></div>
+          <span class="act-time">${esc(timeAgo(a.at))}</span>
+        </li>`).join("")
+      : `<li class="muted small">No persisted activity.</li>`;
+  }
+
+  const r = o.run;
+  $("homeRun").innerHTML = r
+    ? [
+        ["Run", r.run_id],
+        ["Status", r.status],
+        ["Best ASR", r.best_asr == null ? "Unavailable" : r.best_asr],
+        ["Episodes", `${na(r.episodes_consumed)}/${na(r.total_episode_budget)}`],
+        ["Finished", r.finished_at ? `${timeAgo(r.finished_at)} (${clockTime(r.finished_at)})` : "—"],
+      ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")
+    : `<span class="muted">No run recorded.</span>`;
+}
+
+/* ---------------- gmail (real read-only integration) ---------------- */
+
+function renderGmailStatus(s) {
+  const box = $("gmailStatus");
+  if (!box) return;
+  if (!s) {
+    box.className = "defense-result";
+    box.textContent = "Gmail status unavailable.";
+    return;
+  }
+  const scopes = (s.scopes || []).map((x) => `<code>${esc(x)}</code>`).join(" ") || "none";
+  box.className = "defense-result";
+  box.innerHTML = `
+    <div class="line"><span class="pill sm ${s.connected ? "ok" : "bad"}">${s.connected ? "Connected" : s.reauth_required ? "Re-authorization required" : "Not connected"}</span>
+      ${s.read_only ? " · read-only" : ""}</div>
+    <div class="line">Account: ${esc(s.account || "not reported by the token")} · token stored: ${s.token_present ? "yes" : "no"} · token expiry: ${esc(s.expiry || "—")}</div>
+    <div class="line">Scopes: ${scopes}</div>
+    ${s.error ? `<div class="limit" style="color:#FCA5A5">${esc(s.error)}</div>` : ""}
+    ${s.connected ? `<div class="line">The inbox below is fetched live from this Gmail account.</div>` : `<div class="line">Press <strong>Connect Gmail</strong> to run the OAuth consent flow in a browser window. No email is shown until a real token exists.</div>`}
+    ${s.connect_running ? `<div class="line">OAuth consent is in progress…</div>` : ""}
+    ${s.connect_error ? `<div class="limit" style="color:#FCA5A5">Connect error: ${esc(s.connect_error)}</div>` : ""}
+  `;
+}
+
+async function loadGmailStatus() {
+  try {
+    const s = await api("/api/gmail/status");
+    renderGmailStatus(s);
+    return s;
+  } catch (err) {
+    renderGmailStatus({ connected: false, read_only: true, error: err.message });
+    return null;
+  }
+}
+
+function renderGmailInbox(data) {
+  const body = $("gmailInboxBody");
+  const meta = $("gmailInboxMeta");
+  const emails = data.emails || [];
+  if (meta) {
+    meta.textContent = emails.length
+      ? `${emails.length} real message(s) from label ${data.label || "NEMESIS_DEMO"} · fetched ${clockTime(data.fetched_at)}`
+      : "No message carries the NEMESIS_DEMO label.";
+  }
+  body.innerHTML = emails.length
+    ? emails.map((e) => `<tr>
+        <td><code>${esc(e.id)}</code></td>
+        <td>${esc(e.sender)}</td>
+        <td>${esc(e.subject)}</td>
+        <td>${esc(e.received_at || "—")}</td>
+        <td>${esc(e.snippet || "")}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="5" class="empty">No emails returned.</td></tr>`;
+}
+
+function gmailError(err) {
+  const body = $("gmailInboxBody");
+  const meta = $("gmailInboxMeta");
+  if (meta) meta.textContent = "";
+  if (body) {
+    body.innerHTML = `<tr><td colspan="5" class="empty" style="color:#FCA5A5">${esc(err.message)}</td></tr>`;
+  }
+  // Re-read the authoritative status instead of inventing a partial one:
+  // the first render already shows the real token presence/scopes/expiry.
+  loadGmailStatus();
+}
+
+async function loadGmailInbox() {
+  const btn = $("gmailLoadBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api("/api/gmail/inbox?max_results=25");
+    renderGmailInbox(data);
+  } catch (err) {
+    gmailError(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function analyzeGmail() {
+  const box = $("gmailAnalysis");
+  const btn = $("gmailAnalyzeBtn");
+  if (box) {
+    box.className = "defense-result";
+    box.textContent = "Fetching real messages and running the local analysis engine…";
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api("/api/gmail/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_results: 5 }),
+    });
+    if (box) {
+      box.innerHTML = `<div class="line">Analyzed ${na(data.email_count)} real message(s).</div>
+        <pre class="code-block" style="max-height:420px;overflow:auto">${esc(JSON.stringify(data.analysis, null, 2))}</pre>`;
+    }
+  } catch (err) {
+    if (box) {
+      box.innerHTML = `<div class="limit" style="color:#FCA5A5">${esc(err.message)}</div>`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+$("gmailRefreshBtn")?.addEventListener("click", () => loadGmailStatus());
+$("gmailConnectBtn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/gmail/connect", { method: "POST" });
+    toast(res.message || "OAuth consent started.");
+    setTimeout(loadGmailStatus, 1500);
+  } catch (err) {
+    toast(`Could not start Gmail consent: ${err.message}`, true);
+  }
+});
+$("gmailLoadBtn")?.addEventListener("click", loadGmailInbox);
+$("gmailAnalyzeBtn")?.addEventListener("click", analyzeGmail);
+
+/* ---------------- init ---------------- */
+
+window.addEventListener("resize", () => {
+  if (state.page === "experiments") drawChart();
+});
+
+setPage("experiments");
+loadOverview();

@@ -1,4 +1,5 @@
 # Python
+
 __pycache__/
 *.py[cod]
 *$py.class
@@ -38,5 +39,20 @@ Thumbs.db
 *.local.yml
 .env.local
 
+# Gmail OAuth (Phase 3) — never commit the client or the granted token
+credentials.json
+token.json
+
 # Rust compiler artifacts (local scratch builds, not shipped)
 *.rcgu.o
+
+# Operator feedback / quality stores (local, versioned only when explicitly exported)
+backend/data/
+email_workflow/data/
+# Gmail write OAuth and restricted local backups (owner-only; never commit)
+credentials_write.json
+token_write.json
+.oauth-backups/
+
+# Durable outbound workflow state (contains delivery metadata, never bodies or secrets)
+results/nemesis_outbound_state.sqlite3*

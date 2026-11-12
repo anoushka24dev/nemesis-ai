@@ -41,17 +41,12 @@ from __future__ import annotations
 
 import csv
 import json
-import os
-from pathlib import Path
 
 import pytest
 
 from adaptive_agent_eval.defense.adapter import DefenseAdapter
-from adaptive_agent_eval.defense.defenses import DefenseDecision
-from adaptive_agent_eval.defense.defenses import DefenseEvent
-from adaptive_agent_eval.defense.defenses import DefenseType
-from adaptive_agent_eval.llm.provider import ProviderConfig
-from adaptive_agent_eval.llm.provider import ProviderType
+from adaptive_agent_eval.defense.defenses import DefenseDecision, DefenseEvent, DefenseType
+from adaptive_agent_eval.llm.provider import ProviderConfig, ProviderType
 
 
 @pytest.fixture
@@ -198,8 +193,8 @@ def test_c1_stop_condition_checksum_changes_with_state():
 
 
 def test_c1_stop_condition_is_not_controller_stop_condition():
-    from adaptive_agent_eval.pipelines.mode2_c1 import StopCondition as C1Stop
     from adaptive_agent_eval.controller.orchestrator import StopCondition as CtrlStop
+    from adaptive_agent_eval.pipelines.mode2_c1 import StopCondition as C1Stop
 
     assert C1Stop is not CtrlStop
 
@@ -285,3 +280,35 @@ def test_mode2_c1_csv_has_expected_columns(tmp_path, monkeypatch):
             "propagation_happened",
         }
         assert expected.issubset(set(columns))
+
+
+def test_stubs_module_imports_and_demo_episode_runs(tmp_path):
+    """Regression: mode2_c1_stubs must be importable standalone.
+
+    ``PipelineController.__init__`` annotates with classes defined later in
+    the same file, so the module requires ``from __future__ import
+    annotations``. Without it, importing the module raises NameError and the
+    frontend's ``/api/run_c1`` path (``load_run_stubs``) crashes.
+    """
+    import importlib
+
+    stubs = importlib.import_module("adaptive_agent_eval.pipelines.mode2_c1_stubs")
+    assert callable(stubs.run_demo_episode)
+    assert "AttackerStub" in vars(stubs)
+
+    results_dir = tmp_path / "results" / "mode2_c1"
+    out = stubs.run_demo_episode(results_dir=results_dir)
+
+    assert isinstance(out, dict)
+    for key in (
+        "episode_id",
+        "rounds_used",
+        "ASR",
+        "utility",
+        "propagation_rate",
+        "blast_radius",
+        "checksum",
+    ):
+        assert key in out
+    assert (results_dir / "episodes.json").exists()
+    assert (results_dir / "config_summary.json").exists()

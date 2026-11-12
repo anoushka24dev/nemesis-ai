@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nemesis — AI Security Research &amp; Defense</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ==================== SIDEBAR ==================== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2 4 5.5v6.2c0 4.6 3.4 8.9 8 10.3 4.6-1.4 8-5.7 8-10.3V5.5L12 2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7v7M8.5 10.5h7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </div>
+      <div class="brand-text">
+        <h1>Nemesis</h1>
+        <span>AI Security Research &amp; Defense</span>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item" data-page="home">
+        <svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H4v-9Z"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="nav-item active" data-page="experiments">
+        <svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 8a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-8V3"/></svg>
+        <span>Experiments</span>
+      </button>
+      <button class="nav-item" data-page="agents">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6"/><circle cx="18.5" cy="6" r="2"/></svg>
+        <span>Agents</span>
+      </button>
+      <button class="nav-item" data-page="defenses">
+        <svg viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4 3 7.6 7 9 4-1.4 7-5 7-9V6l-7-3Z"/><path d="M9 12l2 2 4-4"/></svg>
+        <span>Defenses</span>
+      </button>
+      <button class="nav-item" data-page="reports">
+        <svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6V3Z"/><path d="M9 12h7M9 16h7M9 8h3"/></svg>
+        <span>Reports</span>
+      </button>
+      <button class="nav-item" data-page="gmail">
+        <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+        <span>Gmail Agent</span>
+      </button>
+      <button class="nav-item" data-page="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="lab-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 2 4 5.5v6.2c0 4.6 3.4 8.9 8 10.3 4.6-1.4 8-5.7 8-10.3V5.5L12 2Z" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+      </div>
+      <div>
+        <div class="lab-title">Local AI Safety Lab</div>
+        <div class="lab-sub">Nemesis v0.1.0</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== MAIN ==================== -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-spacer"></div>
+      <div class="topbar-right">
+        <button class="model-chip" id="modelChip" title="Local model readiness (real Ollama check)">
+          <span class="dot" id="modelDot"></span>
+          <span class="model-chip-text">
+            <strong id="modelChipTitle">Checking Ollama…</strong>
+            <small id="modelChipModel">—</small>
+          </span>
+        </button>
+        <button class="icon-btn" data-page="settings" title="Settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
+        </button>
+        <div class="avatar" title="Local operator">N</div>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- ==================== HOME ==================== -->
+      <section class="page" id="page-home" hidden>
+        <div class="page-head">
+          <div>
+            <h2>Home</h2>
+            <p>Local red-team workspace — state comes from persisted runs only.</p>
+          </div>
+        </div>
+        <div class="home-grid">
+          <div class="card pad">
+            <h3 class="card-title">Workspace status</h3>
+            <div id="homeStatus" class="kv-list"><span class="muted">Loading…</span></div>
+          </div>
+          <div class="card pad">
+            <h3 class="card-title">Last attacker run</h3>
+            <div id="homeRun" class="kv-list"><span class="muted">No run recorded.</span></div>
+          </div>
+          <div class="card pad">
+            <h3 class="card-title">Quick actions</h3>
+            <div class="stack">
+              <button class="btn primary" data-page="experiments">Open Experiments</button>
+              <button class="btn secondary" data-page="agents">Manage connections</button>
+              <button class="btn secondary" data-page="reports">View reports</button>
+            </div>
+            <p class="fineprint">
+              No experiment is started automatically. Every run is bounded by the
+              configured episode, iteration and model-request budgets.
+            </p>
+          </div>
+          <div class="card pad">
+            <h3 class="card-title">Recent activity</h3>
+            <ul class="activity" id="homeActivity"><li class="muted small">No persisted activity.</li></ul>
+            <p class="fineprint">Persisted run, candidate and defense events only. Errors are shown where they occurred.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== EXPERIMENTS ==================== -->
+      <section class="page" id="page-experiments">
+        <div class="page-head">
+          <div>
+            <h2>Experiments</h2>
+            <p>Connect your agent, launch an attack, and watch Nemesis learn.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn primary run-btn" id="runExperimentBtn" title="Start a bounded attacker experiment against the connected target">
+              <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 4l14 8-14 8V4Z" fill="currentColor"/></svg>
+              Run Experiment
+            </button>
+            <button class="btn primary" id="newExperimentBtn">
+              <span class="plus">+</span> New Experiment
+            </button>
+          </div>
+        </div>
+
+        <div class="layout">
+          <div class="col-main">
+
+            <!-- ---- connect step ---- -->
+            <div class="card connect-card">
+              <ol class="stepper" id="stepper">
+                <li class="step active" data-step="1"><span class="step-num">1</span><span>Connect Agent</span></li>
+                <li class="step" data-step="2"><span class="step-num">2</span><span>Configure</span></li>
+                <li class="step" data-step="3"><span class="step-num">3</span><span>Verify</span></li>
+                <li class="step" data-step="4"><span class="step-num">4</span><span>Start</span></li>
+              </ol>
+
+              <h3 class="connect-title">Connect Your Agent</h3>
+              <p class="connect-sub">Choose how your AI agent is accessible. Nemesis supports two ways to connect: a native LangChain agent or an external HTTP endpoint.
+</p>
+
+              <div class="method-grid" id="methodGrid">
+                <!-- rendered from /api/connections -->
+                <div class="method-card" data-method="http_api">
+                  <div class="method-icon blue"><svg viewBox="0 0 24 24"><path d="M4 15a4 4 0 0 1 .6-8 5.5 5.5 0 0 1 10.5 1A3.5 3.5 0 0 1 19 15"/><path d="M4 15h15"/></svg></div>
+                  <h4>HTTP API</h4>
+                  <p>Connect to an agent running as a local service.</p>
+                  <ul class="ticks"><li>Enter your API URL (e.g. http://localhost:8000)</li><li>Add headers or API key if needed</li><li>Works with any REST API</li></ul>
+                  <button class="btn method-btn" data-connect="http_api">Select</button>
+                </div>
+                <div class="method-card" data-method="agent_framework">
+                  <div class="method-icon teal"><svg viewBox="0 0 24 24"><circle cx="12" cy="6" r="2.6"/><circle cx="6" cy="17" r="2.6"/><circle cx="18" cy="17" r="2.6"/><path d="M12 8.6v3.2M10 13l-2.6 2M14 13l2.6 2"/></svg></div>
+                  <h4>Agent Framework</h4>
+                  <p>Native LangChain agent — the real model is invoked.</p>
+                  <ul class="ticks"><li>LangChain <code>create_agent</code> ReAct agent</li><li>Ollama <code>llama3.1:8b</code> by default</li><li>Model errors surface as technical failures</li></ul>
+                  <button class="btn method-btn" data-connect="agent_framework">Select</button>
+                </div>
+              </div>
+
+              <div class="info-bar" id="connectInfo">
+                <span class="info-i">i</span>
+                <span id="connectInfoText">Not sure which to choose? Expose your agent behind a JSON HTTP endpoint and use the HTTP API method. You can manage connections any time in Agents.</span>
+              </div>
+            </div>
+
+            <!-- ---- active experiment ---- -->
+            <div class="card active-card">
+              <div class="active-head">
+                <div class="active-titles">
+                  <div class="title-row">
+                    <h3>Active Experiment</h3>
+                    <span class="pill" id="phasePill"><span class="dot"></span><span id="phaseText">Idle</span></span>
+                  </div>
+                  <p id="activeSub">No experiment has run yet.</p>
+                </div>
+                <div class="active-actions">
+                  <button class="btn dark" id="pauseBtn" disabled title="Pause is not supported by the harness — use Stop.">
+                    <svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg> Pause
+                  </button>
+                  <button class="btn danger" id="stopBtn" disabled>
+                    <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg> Stop
+                  </button>
+                </div>
+              </div>
+
+              <div class="stat-grid">
+                <div class="stat">
+                  <div class="stat-icon purple"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5"/></svg></div>
+                  <div><div class="stat-label">Total Candidates</div><div class="stat-value" id="statCandidates">—</div></div>
+                </div>
+                <div class="stat">
+                  <div class="stat-icon green"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4 3 7.6 7 9 4-1.4 7-5 7-9V6l-7-3Z"/><path d="M9 12l2 2 4-4"/></svg></div>
+                  <div><div class="stat-label">Confirmed success</div><div class="stat-value" id="statSuccess">—</div></div>
+                </div>
+                <div class="stat">
+                  <div class="stat-icon blue"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4 3 7.6 7 9 4-1.4 7-5 7-9V6l-7-3Z"/><path d="M9 12h6"/></svg></div>
+                  <div><div class="stat-label">Blocked</div><div class="stat-value" id="statBlocked">—</div></div>
+                </div>
+                <div class="stat">
+                  <div class="stat-icon red"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 9l6 6M15 9l-6 6"/></svg></div>
+                  <div><div class="stat-label">Technical failure</div><div class="stat-value" id="statTechnical">—</div></div>
+                </div>
+                <div class="stat">
+                  <div class="stat-icon slate"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.3"/><path d="M12 17h.01"/></svg></div>
+                  <div><div class="stat-label">Inconclusive</div><div class="stat-value" id="statInconclusive">—</div></div>
+                </div>
+              </div>
+
+              <div class="two-col">
+                <div class="panel">
+                  <div class="panel-head">
+                    <h4>Attack Progress</h4>
+                    <span class="panel-meta" id="progressMeta">—</span>
+                  </div>
+                  <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+                  <div class="chart-title">Attack Success Rate</div>
+                  <canvas id="asrChart" width="640" height="250" aria-label="Attack success rate over evaluated candidates"></canvas>
+                  <div class="chart-empty" id="chartEmpty" hidden>No measured ASR history yet — run an experiment against a target.</div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-head">
+                    <h4>Search Dimensions</h4>
+                    <span class="panel-meta" id="dimMeta">—</span>
+                  </div>
+                  <ul class="dim-list" id="dimList">
+                    <li class="muted small">No evaluated candidates yet.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div class="two-col">
+                <div class="panel">
+                  <div class="panel-head"><h4>Recent Candidates</h4><span class="panel-meta" id="recentMeta">—</span></div>
+                  <div class="table-scroll">
+                    <table class="table" id="candidateTable">
+                      <thead><tr><th>#</th><th>Objective</th><th>Technique</th><th>Result</th><th>Score</th><th>Time</th></tr></thead>
+                      <tbody id="candidateBody"><tr><td colspan="6" class="empty">No candidates evaluated yet.</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="panel">
+                  <div class="panel-head"><h4>Latest Activity</h4><span class="panel-meta" id="activityMeta">—</span></div>
+                  <ul class="activity" id="activityList"><li class="muted small">No persisted activity.</li></ul>
+                </div>
+              </div>
+
+              <div class="two-col">
+                <div class="panel">
+                  <div class="panel-head"><h4>Hill-climber decisions</h4><span class="panel-meta" id="climbMeta">—</span></div>
+                  <div class="table-scroll">
+                    <table class="table">
+                      <thead><tr><th>Iter</th><th>Strategy</th><th>Parent ASR</th><th>Candidate ASR</th><th>Decision</th><th>Δ</th></tr></thead>
+                      <tbody id="climbBody"><tr><td colspan="6" class="empty">No candidate decisions yet.</td></tr></tbody>
+                    </table>
+                  </div>
+                  <div class="panel-head" style="margin-top:14px"><h4>Accepted-strategy execution</h4></div>
+                  <ul class="activity" id="confirmList"><li class="muted small">No accepted strategy in the latest run.</li></ul>
+                </div>
+                <div class="panel">
+                  <div class="panel-head"><h4>Model proposals</h4><span class="panel-meta" id="proposalMeta">—</span></div>
+                  <ul class="activity" id="proposalList"><li class="muted small">No model request recorded for the latest run.</li></ul>
+                </div>
+              </div>
+
+              <p class="fineprint" id="enforcementNote"></p>
+              <p class="fineprint" id="metricsProvenance">
+                Metrics are derived from the latest persisted run record. Unavailable values stay unavailable.
+              </p>
+              <p class="fineprint" id="runAssistant"></p>
+            </div>
+          </div>
+
+          <!-- ---- right rail ---- -->
+          <aside class="col-rail">
+            <div class="card rail-card">
+              <div class="rail-head"><h4>Connected Agent</h4><span class="pill sm" id="agentPill"><span class="dot"></span><span id="agentPillText">None</span></span></div>
+              <div class="agent-tile">
+                <div class="agent-avatar"><svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="10" rx="3"/><circle cx="9.5" cy="13" r="1.2"/><circle cx="14.5" cy="13" r="1.2"/><path d="M12 8V5"/></svg></div>
+                <div>
+                  <div class="agent-name" id="agentName">No target connected</div>
+                  <div class="agent-kind" id="agentKind">—</div>
+                </div>
+              </div>
+              <button class="btn dark full" data-page="agents">Manage Connection</button>
+            </div>
+
+            <div class="card rail-card">
+              <h4>Attack Objectives</h4>
+              <ul class="objective-list" id="objectiveList"></ul>
+            </div>
+
+            <div class="card rail-card">
+              <h4>Model</h4>
+              <div class="agent-tile">
+                <div class="agent-avatar model"><svg viewBox="0 0 24 24"><path d="M7 9a5 5 0 0 1 9.6-1.4A3.5 3.5 0 0 1 18 14H7a3 3 0 0 1 0-6Z"/></svg></div>
+                <div>
+                  <div class="agent-name" id="modelName">Ollama</div>
+                  <div class="agent-kind" id="modelId">checking…</div>
+                </div>
+                <span class="pill sm right" id="modelPill"><span class="dot"></span><span id="modelPillText">…</span></span>
+              </div>
+              <div class="rail-note" id="modelNote"></div>
+            </div>
+
+            <div class="card rail-card">
+              <h4>Experiment Settings</h4>
+              <dl class="settings-list" id="settingsList">
+                <div><dt>Episode budget</dt><dd id="setMax">—</dd></div>
+                <div><dt>Hill climber</dt><dd id="setClimb">—</dd></div>
+                <div><dt>Defense phase</dt><dd id="setDefense">—</dd></div>
+              </dl>
+              <button class="link-btn" data-page="reports">View Details <span>→</span></button>
+            </div>
+
+            <div class="card rail-card reports-card">
+              <h4>View Reports</h4>
+              <p>See full results, evidence, and defense comparisons after the experiment.</p>
+              <button class="btn purple-outline full" data-page="reports">Go to Reports <span>→</span></button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ==================== AGENTS ==================== -->
+      <section class="page" id="page-agents" hidden>
+        <div class="page-head">
+          <div>
+            <h2>Agents</h2>
+            <p>Connect a real target. A connection is only “ready” after its probe succeeds.</p>
+          </div>
+        </div>
+        <div id="agentMethodList" class="agents-grid"></div>
+        <div class="card pad">
+          <h3 class="card-title">HTTP API contract</h3>
+          <p class="small muted">Your agent must accept a <code>POST</code> request with this JSON body and reply with a JSON object containing <code>output</code> (and optionally <code>tool_calls</code> and <code>observations</code>). Nemesis sends one bounded probe before a connection is marked ready.</p>
+          <pre class="code-block" id="httpContract">POST &lt;your endpoint&gt;
+Content-Type: application/json
+
+{
+  "probe": true,
+  "session_id": "nemesis-connectivity-probe",
+  "correlation_id": "&lt;hex&gt;",
+  "input": "&lt;attack prompt or benign probe text&gt;",
+  "available_tools": [],
+  "history": []
+}
+
+# expected response (200)
+{
+  "output": "...",
+  "tool_calls": [],
+  "observations": {
+    "unauthorized_access": null,
+    "exfiltrated": null,
+    "disclosed": null
+  }
+}</pre>
+          <p class="fineprint">A non-2xx response, a timeout or a non-JSON body is a technical failure. It is never counted as a blocked attack. Authorization headers are held in memory for this process only and are never stored or returned.</p>
+        </div>
+      </section>
+
+      <!-- ==================== DEFENSES ==================== -->
+      <section class="page" id="page-defenses" hidden>
+        <div class="page-head">
+          <div>
+            <h2>Defenses</h2>
+            <p>Attacker campaigns finish on their own. Defense evaluation is a separate operation: choose a completed campaign, choose the saved cases, then press Run Defense.</p>
+          </div>
+        </div>
+        <div class="card pad">
+          <div class="barrier" id="barrierBox">Checking completed attacker campaigns…</div>
+          <div class="defense-controls">
+            <label>Completed attacker campaign
+              <select id="defenseCampaignSelect"><option value="">— none —</option></select>
+            </label>
+            <label>Defense
+              <select id="defenseSelect">
+                <optgroup label="Real research implementations">
+                  <option value="progent_real">Progent — real paper artifact (MIT, vendored) · deny-by-default, blocks before execution</option>
+                  <option value="camel_real">CaMeL — real Google core (Apache-2.0) · provenance + default-deny</option>
+                </optgroup>
+                <optgroup label="Local proxies (labelled, not the research systems)">
+                  <option value="marker">CaMeL-style marker (local proxy)</option>
+                  <option value="verifier">Intent verifier (local proxy)</option>
+                  <option value="progent">Progent-style privilege control (local proxy)</option>
+                </optgroup>
+              </select>
+            </label>
+            <button class="btn primary" id="runDefenseBtn" disabled>Run Defense</button>
+          </div>
+          <div id="defenseCampaignMeta" class="fineprint">No campaign selected.</div>
+          <div class="defense-case-head">
+            <span>Saved attack cases</span>
+            <div class="defense-case-actions">
+              <button class="link-btn" id="defenseSelectAll" type="button">Select all eligible</button>
+              <button class="link-btn" id="defenseClearSelection" type="button">Clear</button>
+              <span id="defenseSelectionMeta" class="muted small"></span>
+            </div>
+          </div>
+          <div id="defenseCaseSelect" class="case-select-list">
+            <div class="muted small">Choose a completed campaign to list its saved cases.</div>
+          </div>
+          <div id="defenseExclusions" class="fineprint"></div>
+          <div id="defenseJobStatus" class="defense-result muted small">No defense job in this session.</div>
+          <div id="defenseResult" class="defense-result muted small">No defense result selected.</div>
+        </div>
+        <div id="defenseCatalog" class="defense-grid"></div>
+        <div class="card pad">
+          <h3 class="card-title">Defense evaluations (persisted)</h3>
+          <div class="table-scroll">
+            <table class="table">
+              <thead><tr><th>Source run</th><th>Case</th><th>Defense</th><th>State</th><th>Cases</th><th>Success</th><th>Blocked</th><th>Inconclusive</th><th>Technical</th><th>Evaluated</th></tr></thead>
+              <tbody id="defenseEvalBody"><tr><td colspan="10" class="empty">None yet.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== REPORTS ==================== -->
+      <section class="page" id="page-reports" hidden>
+        <div class="page-head">
+          <div>
+            <h2>Reports</h2>
+            <p>Persisted attacker runs and case-level evidence. Nothing is recomputed for display.</p>
+          </div>
+          <button class="btn secondary" id="refreshBtn">Refresh</button>
+        </div>
+        <div class="card pad">
+          <h3 class="card-title">Attacker runs</h3>
+          <div class="table-scroll">
+            <table class="table">
+              <thead><tr><th>Run</th><th>Status</th><th>Target</th><th>Mode</th><th>Best ASR</th><th>Episodes</th><th>Finished</th></tr></thead>
+              <tbody id="runTableBody"><tr><td colspan="7" class="empty">No runs persisted.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card pad">
+          <h3 class="card-title">Saved attack cases <span class="muted small" id="casesMeta"></span></h3>
+          <div class="table-scroll">
+            <table class="table">
+              <thead><tr><th>Case ID</th><th>Episode</th><th>Outcome</th><th>Observed</th><th>Defense decision</th><th>Steps</th></tr></thead>
+              <tbody id="caseTableBody"><tr><td colspan="6" class="empty">No saved cases.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card pad">
+          <h3 class="card-title">Defense results <span class="muted small" id="defenseReportMeta"></span></h3>
+          <p class="small muted">Separate defense jobs, linked to the attacker campaign their saved cases came from. Opening this page never starts a job.</p>
+          <div class="table-scroll">
+            <table class="table">
+              <thead><tr><th>Job / source run</th><th>Cases</th><th>Defense</th><th>State</th><th>Success</th><th>Blocked</th><th>Inconclusive</th><th>Technical</th><th>Rate (denominator)</th><th>Finished</th></tr></thead>
+              <tbody id="defenseReportBody"><tr><td colspan="10" class="empty">No defense evaluation persisted.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card pad">
+          <h3 class="card-title">Raw latest run</h3>
+          <pre class="code-block" id="rawRun">—</pre>
+        </div>
+      </section>
+
+      <!-- ==================== GMAIL AGENT ==================== -->
+      <section class="page" id="page-gmail" hidden>
+        <div class="page-head">
+          <div>
+            <h2>Gmail Agent</h2>
+            <p>Read-only Gmail integration. This page calls the real Gmail API through the stored OAuth token — it never shows sample mail or a simulated mailbox.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn secondary" id="gmailRefreshBtn">Refresh status</button>
+            <button class="btn primary" id="gmailConnectBtn">Connect Gmail</button>
+          </div>
+        </div>
+        <div class="card pad">
+          <h3 class="card-title">Connection</h3>
+          <div id="gmailStatus" class="defense-result muted small">Checking the real Gmail connection…</div>
+        </div>
+        <div class="card pad">
+          <div class="bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn primary" id="gmailLoadBtn">Load NEMESIS_DEMO inbox</button>
+            <button class="btn secondary" id="gmailAnalyzeBtn">Analyze inbox (local Ollama)</button>
+            <span class="muted small" id="gmailInboxMeta"></span>
+          </div>
+          <div class="table-scroll" style="margin-top:12px">
+            <table class="table">
+              <thead><tr><th>ID</th><th>Sender</th><th>Subject</th><th>Received</th><th>Snippet</th></tr></thead>
+              <tbody id="gmailInboxBody"><tr><td colspan="5" class="empty">No inbox loaded.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card pad">
+          <h3 class="card-title">Threat analysis</h3>
+          <div id="gmailAnalysis" class="defense-result muted small">Run “Analyze inbox” to send the fetched messages through the local analysis engine.</div>
+        </div>
+      </section>
+
+      <!-- ==================== SETTINGS ==================== -->
+      <section class="page" id="page-settings" hidden>
+        <div class="page-head">
+          <div>
+            <h2>Settings</h2>
+            <p>Provider readiness, model identity, and the limits the backend actually enforces.</p>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <div class="card pad">
+            <h3 class="card-title">Local model</h3>
+            <div id="settingsModel" class="kv-list"></div>
+          </div>
+          <div class="card pad">
+            <h3 class="card-title">Enforced limits</h3>
+            <div id="settingsLimits" class="kv-list"></div>
+            <p class="fineprint">Limits come from the backend configuration. The dashboard cannot raise them.</p>
+          </div>
+          <div class="card pad">
+            <h3 class="card-title">Checkpoint</h3>
+            <div id="settingsCheckpoint" class="kv-list"></div>
+          </div>
+          <div class="card pad">
+            <h3 class="card-title">Connections</h3>
+            <div id="settingsConnections" class="kv-list"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ==================== EXPERIMENT MODAL ==================== -->
+<div class="modal-backdrop" id="expModal" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="expModalTitle">
+    <div class="modal-head">
+      <h3 id="expModalTitle">Configure experiment</h3>
+      <button class="icon-btn" id="expModalClose" title="Close">×</button>
+    </div>
+    <p class="modal-sub">Bounded by the limits shown. Nothing starts until you press Start and validation passes.</p>
+    <div class="form-grid two">
+      <label>Objective
+        <select id="cfgObjective"><option value="all">All three objectives (fixed set)</option></select>
+      </label>
+      <label>Search strategy
+        <select id="cfgMode">
+          <option value="greedy">Greedy hill climbing (strict improvement)</option>
+          <option value="feedback">Feedback-guided search</option>
+        </select>
+      </label>
+      <label>Assistant provider
+        <select id="cfgProvider">
+          <option value="ollama">Ollama (local, default)</option>
+          <option value="rules_only">Rules-only (no model requests)</option>
+          <option value="none">None (statistics-only ranking)</option>
+          <option value="fake">Offline fake double (tests only)</option>
+        </select>
+        <span class="field-hint" id="cfgProviderHint"></span>
+      </label>
+      <label>Search-time defense
+        <select id="cfgDefense">
+          <option value="marker">CaMeL-style marker (local proxy)</option>
+          <option value="verifier">Intent verifier (local proxy)</option>
+          <option value="progent">Progent-style privilege control (local proxy)</option>
+        </select>
+        <span class="field-hint">Applied while each candidate episode is evaluated, so search scores reflect it. This is separate from the defense-evaluation phase, which replays saved cases afterwards.</span>
+      </label>
+      <label>Episodes per candidate
+        <input type="number" id="cfgEpisodes" value="2" min="1" max="64">
+      </label>
+      <label>Iterations
+        <input type="number" id="cfgIterations" value="2" min="1" max="10">
+      </label>
+      <label>Cumulative episode budget
+        <input type="number" id="cfgBudget" value="24" min="1" max="400">
+      </label>
+      <label>Model-request budget
+        <input type="number" id="cfgModelBudget" value="50" min="1" max="500">
+      </label>
+    </div>
+    <div class="target-line" id="cfgTargetLine">Target: no user agent connected — the run uses the labelled seeded stand-in.</div>
+    <div class="modal-actions">
+      <button class="btn secondary" id="expValidateBtn">Verify configuration</button>
+      <button class="btn secondary" id="expModalCancel">Cancel</button>
+      <button class="btn primary" id="expStartBtn">Start experiment</button>
+    </div>
+    <div id="expResult" class="probe-result" hidden></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

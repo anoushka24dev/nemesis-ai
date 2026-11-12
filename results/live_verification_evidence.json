@@ -1,0 +1,179 @@
+{
+  "approved_at": "2026-11-05T09:01:13+00:00",
+  "body": "This is a controlled test email sent by the Nemesis Gmail workflow to verify real Gmail delivery after the Phase 1B safety remediation. No further action is required.",
+  "defense": {
+    "decision": "allow",
+    "indicators": [],
+    "kind": "new",
+    "message_id": "a6e12249e97d40f291b7a3b35178bc19",
+    "reasons": [
+      "score 0.05 -> risk_level \"low\", decision \"allow\" (review >= 0.15, flag >= 0.50); recommendation only \u2014 no Gmail action is executed."
+    ],
+    "risk_level": "low",
+    "risk_score": 0.05,
+    "rule_version": "threat-rules-v1",
+    "source": "deterministic_rules",
+    "threat_types": []
+  },
+  "idempotency_record": {
+    "action": "send",
+    "attempts": 1,
+    "created_at": "2026-11-05T09:01:15Z",
+    "error": null,
+    "idempotency_key": "8bff899bda44cb06c5725f5fc13e36ccf37fbbb9894285bd0318ff9b2d79fd09",
+    "message_fingerprint": "aabf2b110563f78e2d2614801fe9d1bb1af050b3c3b940087e2d64da923de9bb",
+    "message_id": "1a1aaf11d944796b",
+    "note": null,
+    "recipient_fingerprint": "66eeeda38e7a8bc08a196bae0e1406f82e8edc3da855eaa0b77b7692fa10fa62",
+    "record_id": "1a1aaf11d944796b",
+    "state": "confirmed",
+    "thread_id": "1a1aaf11d944796b",
+    "transport": "gmail-live",
+    "updated_at": "2026-11-05T09:01:31Z"
+  },
+  "message_fingerprint_sha256": "aabf2b110563f78e2d2614801fe9d1bb1af050b3c3b940087e2d64da923de9bb",
+  "post_send_kill_switch": {
+    "actor": "system",
+    "defaulted": false,
+    "durable": true,
+    "engaged": true,
+    "reason": "Phase 1C post-send re-engagement",
+    "source": "persistent",
+    "updated_at": "2026-11-05T09:01:31Z"
+  },
+  "post_send_live_status": {
+    "allowed_write_scopes": [
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/gmail.send"
+    ],
+    "consent_env": "NEMESIS_LIVE_SEND_CONSENT",
+    "consent_env_set": false,
+    "consent_phrase_required": "I authorize real Gmail sends from Nemesis",
+    "live_send_armed": false,
+    "live_transport_configured": false,
+    "note": "Live sending additionally requires the workflow policy to be in 'authorized_automation' mode with owner flags and matching granted scopes; read-only OAuth never authorizes writes.",
+    "validation_note": "token validation is local/structural; no Gmail request is made",
+    "write_credentials_match": true,
+    "write_credentials_present": true,
+    "write_token_expired": false,
+    "write_token_has_refresh": true,
+    "write_token_present": true,
+    "write_token_readable": true,
+    "write_token_refresh_verified": false,
+    "write_token_scope_valid": true,
+    "write_token_structurally_valid": true
+  },
+  "pre_send_kill_switch": {
+    "actor": "owner",
+    "defaulted": false,
+    "durable": true,
+    "engaged": false,
+    "reason": "Phase 1C explicit one-time live-send approval",
+    "source": "persistent",
+    "updated_at": "2026-11-05T09:01:15Z"
+  },
+  "pre_send_live_status": {
+    "allowed_write_scopes": [
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/gmail.send"
+    ],
+    "consent_env": "NEMESIS_LIVE_SEND_CONSENT",
+    "consent_env_set": true,
+    "consent_phrase_required": "I authorize real Gmail sends from Nemesis",
+    "live_send_armed": true,
+    "live_transport_configured": true,
+    "note": "Live sending additionally requires the workflow policy to be in 'authorized_automation' mode with owner flags and matching granted scopes; read-only OAuth never authorizes writes.",
+    "validation_note": "token validation is local/structural; no Gmail request is made",
+    "write_credentials_match": true,
+    "write_credentials_present": true,
+    "write_token_expired": false,
+    "write_token_has_refresh": true,
+    "write_token_present": true,
+    "write_token_readable": true,
+    "write_token_refresh_verified": false,
+    "write_token_scope_valid": true,
+    "write_token_structurally_valid": true
+  },
+  "prepared_artifact_id": "a6e12249e97d40f291b7a3b35178bc19",
+  "report": {
+    "action": "send",
+    "audit_id": "2026-11-05T09:01:31Z",
+    "defense": {
+      "decision": "allow",
+      "indicators": [],
+      "kind": "new",
+      "message_id": "a6e12249e97d40f291b7a3b35178bc19",
+      "reasons": [
+        "score 0.05 -> risk_level \"low\", decision \"allow\" (review >= 0.15, flag >= 0.50); recommendation only \u2014 no Gmail action is executed."
+      ],
+      "risk_level": "low",
+      "risk_score": 0.05,
+      "rule_version": "threat-rules-v1",
+      "source": "deterministic_rules",
+      "threat_types": []
+    },
+    "executed": true,
+    "message": {
+      "bcc": [],
+      "body": "This is a controlled test email sent by the Nemesis Gmail workflow to verify real Gmail delivery after the Phase 1B safety remediation. No further action is required.",
+      "cc": [],
+      "created_mode": "simulation",
+      "in_reply_to": null,
+      "kind": "new",
+      "message_id": "a6e12249e97d40f291b7a3b35178bc19",
+      "references": [],
+      "settings": {
+        "greeting": true,
+        "length": "normal",
+        "sign_off": true,
+        "tone": "neutral"
+      },
+      "source_email_id": null,
+      "subject": "Nemesis Gmail Live-Send Verification",
+      "thread_id": null,
+      "to": [
+        "anoushkas2006@gmail.com"
+      ]
+    },
+    "message_id": "1a1aaf11d944796b",
+    "mode": "authorized_automation",
+    "prepared_id": "a6e12249e97d40f291b7a3b35178bc19",
+    "reason": null,
+    "simulated": false,
+    "status": "sent",
+    "thread_id": "1a1aaf11d944796b",
+    "transport": {
+      "detail": {
+        "message_id": "1a1aaf11d944796b",
+        "note": "Gmail API confirmed with an id",
+        "thread_id": "1a1aaf11d944796b"
+      },
+      "duplicate": false,
+      "error": null,
+      "message_id": "1a1aaf11d944796b",
+      "ok": true,
+      "record_id": "1a1aaf11d944796b",
+      "thread_id": "1a1aaf11d944796b",
+      "transport": "gmail-live"
+    },
+    "transport_called": true
+  },
+  "sender": "wuttisthisnishi@gmail.com",
+  "session_disarmed_at": "2026-11-05T09:01:31+00:00",
+  "subject": "Nemesis Gmail Live-Send Verification",
+  "to": [
+    "anoushkas2006@gmail.com"
+  ],
+  "token_refresh": {
+    "expiry": "2026-11-05T10:01:14.715942",
+    "had_refresh_token": true,
+    "refresh_success": true,
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/gmail.send"
+    ],
+    "token_file_expired": false,
+    "token_file_scope_valid": true,
+    "token_file_structurally_valid": true
+  }
+}

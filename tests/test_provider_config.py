@@ -29,7 +29,7 @@ def _clear_llm_modules() -> None:
 def test_explicit_argument_wins_over_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     _clear_llm_modules()
-    import adaptive_agent_eval.llm.provider as _p  # noqa: F811
+    import adaptive_agent_eval.llm.provider as _p
     importlib.reload(_p)
 
     cfg = _p.ProviderConfig.from_env(provider=ProviderType.OPENAI)
@@ -39,7 +39,7 @@ def test_explicit_argument_wins_over_env_var(monkeypatch: pytest.MonkeyPatch) ->
 def test_env_var_used_when_no_argument_given(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     _clear_llm_modules()
-    import adaptive_agent_eval.llm.provider as _p  # noqa: F811
+    import adaptive_agent_eval.llm.provider as _p
     importlib.reload(_p)
 
     cfg = _p.ProviderConfig.from_env()
@@ -49,8 +49,12 @@ def test_env_var_used_when_no_argument_given(monkeypatch: pytest.MonkeyPatch) ->
 def test_env_var_falls_back_to_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     _clear_llm_modules()
-    import adaptive_agent_eval.llm.provider as _p  # noqa: F811
+    import adaptive_agent_eval.llm.provider as _p
     importlib.reload(_p)
+    # load_dotenv() at module import re-reads the project .env (which a real
+    # setup defines); the contract under test is "env unset at call time",
+    # so drop it again after the reload.
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
 
     cfg = _p.ProviderConfig.from_env()
     assert cfg.provider == ProviderType.OPENAI
@@ -59,7 +63,7 @@ def test_env_var_falls_back_to_default_when_unset(monkeypatch: pytest.MonkeyPatc
 def test_empty_string_argument_triggers_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     _clear_llm_modules()
-    import adaptive_agent_eval.llm.provider as _p  # noqa: F811
+    import adaptive_agent_eval.llm.provider as _p
     importlib.reload(_p)
 
     cfg = _p.ProviderConfig.from_env(provider="")
@@ -69,7 +73,7 @@ def test_empty_string_argument_triggers_env_fallback(monkeypatch: pytest.MonkeyP
 def test_none_argument_triggers_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     _clear_llm_modules()
-    import adaptive_agent_eval.llm.provider as _p  # noqa: F811
+    import adaptive_agent_eval.llm.provider as _p
     importlib.reload(_p)
 
     cfg = _p.ProviderConfig.from_env(provider=None)  # type: ignore[arg-type]
@@ -79,7 +83,7 @@ def test_none_argument_triggers_env_fallback(monkeypatch: pytest.MonkeyPatch) ->
 def test_invalid_env_var_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "foo")
     _clear_llm_modules()
-    import adaptive_agent_eval.llm.provider as _p  # noqa: F811
+    import adaptive_agent_eval.llm.provider as _p
     importlib.reload(_p)
 
     with pytest.raises(ValueError, match="Unknown provider"):
@@ -94,7 +98,7 @@ def test_invalid_explicit_argument_is_rejected() -> None:
 def test_case_insensitive_env_var_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "ANTHROPIC")
     _clear_llm_modules()
-    import adaptive_agent_eval.llm.provider as _p  # noqa: F811
+    import adaptive_agent_eval.llm.provider as _p
     importlib.reload(_p)
 
     cfg = _p.ProviderConfig.from_env()

@@ -1,5 +1,5 @@
 """
-Stitch MCP frontend server for Nemesis Mode 2 / Config C1 demo.
+Frontend server for Nemesis AI — Adaptive Red-Teaming of Agent Defenses.
 
 Serves:
   - Static frontend (index.html, app.js, styles.css)
@@ -10,29 +10,803 @@ Serves:
   - /api/doc               POST — renders a markdown doc to HTML
   - /api/adr_index         GET  — list of ADR entries
   - /api/adr               POST — renders a single ADR to HTML
-
-No external API calls. Everything comes from local stub artifacts.
+  - /api/overview          GET  — read-only dashboard aggregate (persisted state only)
+  - /api/connections       GET/POST — the two supported connection methods; connect probes for real
+  - /api/targets           GET  — list supported target declarations
+  - /api/adaptive/status   GET  — current adaptive harness state, active strategy, candidates
+  - /api/adaptive/monitor  GET  — real-time progress monitor for running evaluations
+  - /api/adaptive/run      POST — launch a bounded adaptive evaluation (greedy or feedback)
+  - /api/adaptive/stop     POST — signal running evaluation to stop after current episode
+  - /api/adaptive/pause    POST — pause candidate scheduling on the active run
+  - /api/adaptive/resume   POST — resume a paused active run, or an interrupted checkpoint
+  - /api/adaptive/defense_eval POST — replay finding against selected defense with 4-state verdict
 """
 
 from __future__ import annotations
 
 import html
 import json
+import logging
 import markdown
 import os
 import re
 import sys
+import threading
+import time
 from pathlib import Path
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+
+# The project packages (``backend``, ``adaptive_agent_eval``) live in the repo
+# root. Running this file directly puts ``frontend/`` on sys.path, so make the
+# root importable too — the dashboard must not fail just because of how it was
+# launched.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 RESULTS_DIR = PROJECT_ROOT / "results" / "mode2_c1"
 DOCS_DIR = PROJECT_ROOT / "docs"
+ADAPTIVE_STORE_PATH = PROJECT_ROOT / "results" / "adaptive_store.json"
+GMAIL_TOKEN_PATH = PROJECT_ROOT / "token.json"
+
+# Real read-only Gmail integration state. Nothing here is simulated: a missing,
+# expired, or revoked token is reported as a connection error so the UI can ask
+# the owner to re-authorize instead of showing a fake mailbox.
+_GMAIL_STATUS_CACHE: dict = {"at": 0.0, "data": None}
+_GMAIL_STATUS_TTL_SECONDS = 10.0
+_GMAIL_CONNECT: dict = {"thread": None, "started_at": None, "finished": False, "error": None}
+_GMAIL_LOCK = threading.Lock()
+
+
+def _gmail_token_meta() -> dict:
+    """Non-secret metadata from token.json (never the token itself)."""
+    if not GMAIL_TOKEN_PATH.exists():
+        return {"token_present": False, "scopes": [], "expiry": None, "account": None}
+    try:
+        info = json.loads(GMAIL_TOKEN_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {
+            "token_present": True,
+            "scopes": [],
+            "expiry": None,
+            "account": None,
+            "read_error": f"token.json is unreadable: {exc}",
+        }
+    return {
+        "token_present": True,
+        "scopes": list(info.get("scopes") or info.get("scope") or []),
+        "expiry": info.get("expiry"),
+        "account": info.get("account") or None,
+    }
+
+
+def gmail_status(*, force: bool = False) -> dict:
+    """Probe the REAL read-only Gmail connection.
+
+    A refresh is attempted only when the stored token is expired, and the
+    result is cached briefly so dashboard polling does not hammer Google. The
+    returned dict never contains an access or refresh token.
+    """
+    now = time.time()
+    cached = _GMAIL_STATUS_CACHE.get("data")
+    if (
+        not force
+        and cached is not None
+        and (now - float(_GMAIL_STATUS_CACHE.get("at") or 0)) < _GMAIL_STATUS_TTL_SECONDS
+    ):
+        return cached
+    meta = _gmail_token_meta()
+    connected = False
+    error = meta.get("read_error")
+    if meta["token_present"] and not error:
+        try:
+            from gmail_auth import get_credentials
+
+            get_credentials(open_browser=False, timeout_seconds=1)
+            connected = True
+            error = None
+        except Exception as exc:  # noqa: BLE001 - reported, never hidden
+            error = str(exc)
+    elif not meta["token_present"]:
+        error = "No Gmail token is stored. Connect the read-only sandbox account first."
+    data = {
+        "provider": "gmail",
+        "connected": connected,
+        "read_only": True,
+        "account": meta.get("account"),
+        "scopes": meta.get("scopes"),
+        "expiry": meta.get("expiry"),
+        "token_present": meta.get("token_present"),
+        "error": error,
+        "reauth_required": bool(meta["token_present"] and not connected),
+        "connect_running": bool(
+            _GMAIL_CONNECT.get("thread") and _GMAIL_CONNECT["thread"].is_alive()
+        ),
+        "connect_error": _GMAIL_CONNECT.get("error"),
+        "checked_at": _now_iso(),
+    }
+    _GMAIL_STATUS_CACHE["at"] = now
+    _GMAIL_STATUS_CACHE["data"] = data
+    return data
+
+
+def gmail_inbox(*, max_results: int = 25) -> dict:
+    """Fetch messages from the real Gmail account (NEMESIS_DEMO label only)."""
+    from gmail_auth import (
+        DEMO_LABEL,
+        GMAIL_READONLY_SCOPE,
+        build_gmail_service,
+        fetch_nemesis_demo_emails,
+        get_credentials,
+    )
+
+    creds = get_credentials(open_browser=False, timeout_seconds=1)
+    service = build_gmail_service(creds)
+    emails = fetch_nemesis_demo_emails(service, max_results=max_results)
+    return {
+        "status": "ok",
+        "provider": "gmail",
+        "label": DEMO_LABEL,
+        "scope": GMAIL_READONLY_SCOPE,
+        "read_only": True,
+        "email_count": len(emails),
+        "emails": [
+            {
+                "id": em.id,
+                "sender": em.sender,
+                "subject": em.subject,
+                "snippet": em.preview(140),
+                "body_text": em.body,
+                "labels": em.labels,
+                "received_at": em.received_at,
+            }
+            for em in emails
+        ],
+        "fetched_at": _now_iso(),
+    }
+
+
+def gmail_analyze(*, max_results: int = 5) -> dict:
+    """Analyze real fetched emails with the local Ollama-backed engine."""
+    from backend.local_llm import analyze_local
+    from gmail_auth import build_gmail_service, fetch_nemesis_demo_emails, get_credentials
+
+    creds = get_credentials(open_browser=False, timeout_seconds=1)
+    emails = fetch_nemesis_demo_emails(
+        build_gmail_service(creds), max_results=max_results
+    )
+    if not emails:
+        return {
+            "status": "ok",
+            "email_count": 0,
+            "analysis": None,
+            "message": "No NEMESIS_DEMO message is available to analyze.",
+        }
+    analysis = analyze_local(emails, demo_mode=True)
+    return {
+        "status": "ok",
+        "email_count": len(emails),
+        "analysis": analysis,
+        "analyzed_at": _now_iso(),
+    }
+
+
+def start_gmail_connect() -> dict:
+    """Start the real OAuth consent flow in a background thread."""
+    with _GMAIL_LOCK:
+        thread = _GMAIL_CONNECT.get("thread")
+        if thread is not None and thread.is_alive():
+            return {"started": False, "reason": "OAuth consent is already in progress"}
+
+        def run() -> None:
+            try:
+                from gmail_auth import get_credentials
+
+                get_credentials(open_browser=True)
+                _GMAIL_CONNECT["error"] = None
+                _GMAIL_STATUS_CACHE["data"] = None
+            except Exception as exc:  # noqa: BLE001 - surfaced in the UI
+                _GMAIL_CONNECT["error"] = str(exc)
+            finally:
+                _GMAIL_CONNECT["finished"] = True
+
+        thread = threading.Thread(target=run, daemon=True, name="gmail-oauth")
+        _GMAIL_CONNECT.update(
+            {"thread": thread, "started_at": _now_iso(), "finished": False, "error": None}
+        )
+        thread.start()
+    return {
+        "started": True,
+        "message": "A browser window was opened for read-only Gmail consent.",
+    }
 
 # Where the stubs drop artifacts. Mirrors mode2_c1_stubs.RESULTS_DIR default.
 DEFAULT_RESULTS = PROJECT_ROOT / "results" / "mode2_c1"
+
+_harness_instance = None
+
+
+def get_harness():
+    global _harness_instance
+    if _harness_instance is None:
+        from backend.adaptive_harness import AdaptiveHarness
+
+        ADAPTIVE_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        default_mode = (os.environ.get("NEMESIS_SEARCH_MODE", "") or "").strip().lower()
+        _harness_instance = AdaptiveHarness(
+            store_path=str(ADAPTIVE_STORE_PATH),
+            mode=default_mode if default_mode in ("greedy", "feedback") else "greedy",
+        )
+        # Restore the ACTIVE connection as the harness target after a restart:
+        # the connection store is the source of truth for the selected target,
+        # so status, runs and defense replay must agree with the connection
+        # card instead of silently reverting to the seeded stand-in. A failed
+        # restore is logged and the mismatch stays visible in ``status.target``.
+        try:
+            from backend.connections import get_store
+
+            payload = get_store().target_payload()
+            wanted = (payload or {}).get("target_id")
+            current = _harness_instance.status(with_candidates=False).get("target")
+            if wanted != current:
+                if payload:
+                    _harness_instance.configure(target=payload)
+                else:
+                    _harness_instance.clear_target()
+        except Exception as exc:  # noqa: BLE001 - serving must not fail here
+            logging.getLogger(__name__).warning(
+                "could not restore the active connection target: %s", exc
+            )
+    return _harness_instance
+
+
+# ---- dashboard overview ----------------------------------------------------
+#
+# Everything the dashboard renders is computed HERE from persisted state: the
+# adaptive harness store (runs, candidates, per-episode traces, defense
+# evaluations) and the connection store. Nothing is invented for display: a
+# value that cannot be derived is returned as None and the UI shows it as
+# unavailable.
+
+_PROVIDER_CACHE: dict = {"at": 0.0, "data": None}
+_PROVIDER_TTL_SECONDS = 5.0
+
+
+def _now_iso() -> str:
+    import time as _time
+
+    return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+
+
+def _provider_health() -> dict:
+    """Real Ollama reachability/model check, cached for a few seconds.
+
+    This is a genuine local HTTP request (``GET /api/tags``); the dashboard
+    shows the distinguishing outcomes: service unreachable vs model missing
+    vs ready. No hosted provider is ever probed here.
+    """
+    import time as _time
+
+    now = _time.time()
+    cached = _PROVIDER_CACHE.get("data")
+    if cached is not None and (now - float(_PROVIDER_CACHE.get("at") or 0)) < _PROVIDER_TTL_SECONDS:
+        return cached
+    try:
+        from adaptive_agent_eval.llm.provider import OllamaConfig, ollama_health_check
+
+        health = ollama_health_check()
+        data = {
+            "provider": "ollama",
+            "endpoint": health.get("endpoint"),
+            "model": health.get("model"),
+            "reachable": bool(health.get("reachable")),
+            "model_available": bool(health.get("model_available")),
+            "ready": bool(health.get("reachable") and health.get("model_available")),
+            "error": health.get("error"),
+            "error_category": health.get("error_category"),
+            "default_model": OllamaConfig.DEFAULT_MODEL,
+        }
+    except Exception as exc:  # noqa: BLE001 - reported, never hidden
+        data = {
+            "provider": "ollama",
+            "endpoint": None,
+            "model": None,
+            "reachable": False,
+            "model_available": False,
+            "ready": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "error_category": "check_failed",
+        }
+    _PROVIDER_CACHE["at"] = now
+    _PROVIDER_CACHE["data"] = data
+    return data
+
+
+def _case_outcome_bucket(outcome: str | None) -> str:
+    """Map a persisted episode outcome onto a display bucket.
+
+    ``ignored`` stays its own (inconclusive) bucket and is never rolled into
+    ``blocked``; technical failures never become security outcomes.
+    """
+    value = (outcome or "").strip().lower()
+    if value == "success":
+        return "success"
+    if value == "blocked":
+        return "blocked"
+    if value == "ignored":
+        return "ignored"
+    if value in {"technical_fail", "technical_failure"}:
+        return "technical_fail"
+    if value == "inconclusive":
+        return "inconclusive"
+    return "unclassified"
+
+
+def _candidate_summary(record: dict) -> dict:
+    from adaptive_agent_eval.contracts import dimensions_for_ladder
+
+    evaluation = record.get("evaluation") or {}
+    buckets = {
+        "success": 0,
+        "blocked": 0,
+        "ignored": 0,
+        "technical_fail": 0,
+        "inconclusive": 0,
+        "unclassified": 0,
+    }
+    cases = []
+    for trace in evaluation.get("episode_trace") or []:
+        bucket = _case_outcome_bucket(trace.get("observed_outcome") or trace.get("outcome"))
+        buckets[bucket] += 1
+        cases.append(
+            {
+                "case_id": trace.get("case_id"),
+                "episode": trace.get("episode"),
+                "outcome": trace.get("outcome"),
+                "observed_outcome": trace.get("observed_outcome"),
+                "defense_decision": trace.get("defense_decision"),
+                "bucket": bucket,
+                "steps": trace.get("steps") or [],
+            }
+        )
+    dims = [
+        d.get("display_name")
+        for d in dimensions_for_ladder(record.get("ladder") or [])
+        if d.get("display_name")
+    ]
+    return {
+        "candidate_id": record.get("candidate_id"),
+        "created_at": record.get("created_at"),
+        "status": record.get("status"),
+        "objective": evaluation.get("attack_category"),
+        "dimensions": dims,
+        "asr": evaluation.get("asr"),
+        "episodes": evaluation.get("total_episodes"),
+        "asr_denominator": evaluation.get("asr_denominator"),
+        "outcomes": buckets,
+        "target_identity": evaluation.get("target_identity"),
+        "cases": cases,
+        "gate_reasons": (record.get("gate") or {}).get("reasons") or [],
+    }
+
+
+def _dimension_breakdown(history: list[dict]) -> list[dict]:
+    """Share of evaluated candidates that exercised each search dimension.
+
+    Derived only from persisted run history (``strategy_dimensions`` written
+    when the candidate was evaluated). An empty history yields an empty list —
+    the UI shows "no data", never zeros dressed up as coverage.
+    """
+    from adaptive_agent_eval.contracts import (
+        STRATEGY_DIMENSION_IDS,
+        STRATEGY_DIMENSIONS,
+    )
+
+    counts = {d: 0 for d in STRATEGY_DIMENSIONS}
+    total = 0
+    for entry in history:
+        names = entry.get("strategy_dimensions") or []
+        if not names:
+            continue
+        total += 1
+        for name in names:
+            if name in counts:
+                counts[name] += 1
+    return [
+        {
+            "id": dim_id,
+            "name": name,
+            "count": counts[name],
+            "share": (round(counts[name] / total, 4) if total else None),
+            "denominator": total,
+        }
+        for dim_id, name in zip(STRATEGY_DIMENSION_IDS, STRATEGY_DIMENSIONS)
+    ]
+
+
+def build_overview(harness) -> dict:
+    """Aggregate the persisted state the dashboard renders. Read-only."""
+    import time as _time
+
+    from adaptive_agent_eval.contracts import (
+        STRATEGY_DIMENSION_IDS,
+        STRATEGY_DIMENSIONS,
+        TOP_LEVEL_ATTACK_CATEGORIES,
+        TOP_LEVEL_ATTACK_CATEGORY_IDS,
+    )
+    from backend.adaptive_harness import (
+        APPROVED_EXPERIMENT_EPISODE_BUDGET,
+        MAX_EPISODES,
+        MAX_ITERATIONS,
+        MAX_MAX_ROUNDS,
+        MAX_MODEL_REQUEST_BUDGET,
+        MAX_TOTAL_EPISODE_BUDGET,
+    )
+    from backend.connections import get_store
+    from backend.defense_eval import defense_catalog
+    from backend.pre_execution import list_suites as _pre_execution_suites
+
+    status = harness.status(with_candidates=True)
+    candidates = [_candidate_summary(c) for c in status.get("candidates") or []]
+    runs = list(status.get("runs") or [])
+    current = status.get("current_run")
+    latest_run = runs[-1] if runs else None
+    run_dict = latest_run if isinstance(latest_run, dict) else None
+    running = bool(status.get("running"))
+    # While a run is in flight, live counters come from the CURRENT run record;
+    # the previous completed run's measurements must never be presented as if
+    # they described the active experiment.
+    live_run = current if running and isinstance(current, dict) else None
+    counter_run = live_run or run_dict
+
+    # The measured evaluation for the displayed run: the candidate it recorded
+    # as producing it (never a re-derived guess). An in-flight run has no final
+    # measured evaluation yet, so outcomes stay unavailable until it completes.
+    measured = None
+    if run_dict and not running:
+        cid = run_dict.get("candidate_id")
+        measured = next((c for c in candidates if c["candidate_id"] == cid), None)
+        if measured is None and candidates:
+            measured = candidates[-1]
+
+    metrics = {
+        "candidates_evaluated": (counter_run or {}).get("candidate_evaluations"),
+        "episodes_consumed": (counter_run or {}).get("episodes_consumed"),
+        "episode_budget": (counter_run or {}).get("total_episode_budget"),
+        "success": None,
+        "blocked": None,
+        "ignored": None,
+        "technical_fail": None,
+        "inconclusive": None,
+        "unclassified": None,
+        "episodes_measured": None,
+        "asr": (counter_run or {}).get("best_asr"),
+        "baseline_asr": (counter_run or {}).get("baseline_asr"),
+        # Independent security-outcome channels and the planned/consumed
+        # episode accounting. Passed through unchanged from the persisted run
+        # record; the dashboard never derives or merges them itself.
+        "ground_truth": (counter_run or {}).get("ground_truth_metrics"),
+        "budget_plan": (counter_run or {}).get("budget_plan"),
+        "episode_accounting": (counter_run or {}).get("episode_accounting"),
+        "stop_reason": (counter_run or {}).get("stop_reason"),
+        "confirmation_status": (counter_run or {}).get("confirmation_status"),
+        "source": "in flight: outcome counts are published when the run terminates"
+        if running
+        else None,
+        "dimensions": _dimension_breakdown((run_dict or {}).get("history") or [])
+        if not running
+        else [
+            {"id": d, "name": n, "count": 0, "share": None, "denominator": 0}
+            for d, n in zip(STRATEGY_DIMENSION_IDS, STRATEGY_DIMENSIONS)
+        ],
+    }
+    # Historical runs predate the separated ground-truth schema. Recalculate
+    # their metrics from the persisted episode evidence where it supports it
+    # (verified recipient comparison + the run's recorded evaluation mode); a
+    # record whose evidence cannot support a channel reports it as unavailable.
+    ground_truth_source = (
+        "persisted"
+        if (counter_run or {}).get("ground_truth_metrics")
+        else None
+    )
+    if ground_truth_source is None and run_dict and not running:
+        try:
+            from backend.adaptive_harness import resolve_objective_id
+            from backend.ground_truth_metrics import compute_ground_truth_metrics
+
+            category = run_dict.get("global_best_category")
+            try:
+                category = resolve_objective_id(category) if category else None
+            except (ValueError, KeyError):
+                category = None
+            legacy_gt = compute_ground_truth_metrics(
+                run_dict.get("episode_trace") or [],
+                fallback_mode=(run_dict.get("target_snapshot") or {}).get("mode"),
+                attack_category=category,
+            )
+        except Exception:  # noqa: BLE001 - reporting must never crash the page
+            legacy_gt = None
+        if legacy_gt is not None:
+            metrics["ground_truth"] = legacy_gt
+            ground_truth_source = (
+                "recalculated_from_legacy_evidence"
+                if (legacy_gt.get("recalculation") or {}).get("recalculable")
+                else "unavailable_legacy_evidence"
+            )
+    metrics["ground_truth_source"] = ground_truth_source
+
+    if measured:
+        outcomes = measured["outcomes"]
+        metrics.update(
+            {
+                "success": outcomes["success"],
+                "blocked": outcomes["blocked"],
+                "ignored": outcomes["ignored"] + outcomes["inconclusive"],
+                "technical_fail": outcomes["technical_fail"],
+                "inconclusive": outcomes["ignored"] + outcomes["inconclusive"],
+                "unclassified": outcomes["unclassified"],
+                "episodes_measured": measured["episodes"],
+                "source": (
+                    f"final evaluation of {measured['candidate_id']} "
+                    f"({measured['episodes']} episode(s), "
+                    f"ASR denominator {measured['asr_denominator']})"
+                ),
+            }
+        )
+
+    # -- lifecycle / completion barrier --
+    phase = "idle"
+    barrier_reason = None
+    eligibility = None
+    if status.get("running"):
+        active_status = str(((status.get("current_run") or {}).get("status")) or "running")
+        phase = {
+            "paused": "paused",
+            "stopping": "stopping",
+        }.get(active_status, "attacker")
+    elif run_dict:
+        run_status = run_dict.get("status")
+        if run_status == "completed":
+            phase = "defense_ready"
+        else:
+            phase = "incomplete"
+            barrier_reason = (
+                f"attacker run {run_dict.get('run_id')} finished with status "
+                f"{run_status!r}; defense evaluation requires a completed run"
+            )
+    if status.get("running"):
+        # Explicit barrier state while the attacker executes: no defense
+        # evaluation is eligible, not even against an older completed run.
+        eligibility = {
+            "eligible": False,
+            "reason": (
+                "an attacker search is running; the defense phase can only "
+                "start after it terminates and its cases persist"
+            ),
+            "source_run_id": None,
+            "run_status": "running",
+        }
+    elif run_dict and run_dict.get("candidate_id"):
+        try:
+            eligibility = harness.defense_phase_eligibility(
+                run_dict["candidate_id"], run_id=run_dict.get("run_id")
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced, not hidden
+            eligibility = {
+                "eligible": False,
+                "reason": f"eligibility check failed: {exc}",
+                "source_run_id": run_dict.get("run_id"),
+                "run_status": run_dict.get("status"),
+            }
+
+    # A completed attacker run without a usable persisted case is NOT
+    # "defense ready": the lifecycle must agree with the eligibility verdict.
+    if (
+        phase == "defense_ready"
+        and eligibility is not None
+        and not eligibility.get("eligible")
+    ):
+        phase = "defense_unavailable"
+
+    evaluations = list(status.get("defense_evaluations") or [])
+    latest_defense = evaluations[-1] if evaluations else None
+    if latest_defense and run_dict and latest_defense.get("source_run_id") == run_dict.get("run_id"):
+        # An evaluation that could not replay anything is not a completed
+        # comparison: report it as inconclusive, not as "defense completed".
+        # Lifecycle from the harness's explicit state, which is also what the
+        # evaluation row renders. A zero-case replay is never "completed".
+        d_state = latest_defense.get("evaluation_state") or (
+            "inconclusive"
+            if (latest_defense.get("result") or {}).get("unavailable")
+            else "completed_with_evidence"
+        )
+        phase = {
+            "completed_with_evidence": "defense_completed",
+            "inconclusive": "defense_inconclusive",
+            "unavailable": "defense_unavailable",
+            "technical_failure": "defense_failed",
+            "running": "defense_running",
+        }.get(d_state, "defense_inconclusive")
+
+    eligible_cases = []
+    if measured and eligibility and eligibility.get("eligible"):
+        # Each eligible case must carry the identifiers the defense phase needs:
+        # the persisted candidate id (defense_evaluation is keyed by it) and the
+        # source attacker run. The usable set comes from the harness's saved-case
+        # contract, so the UI can never offer a case the replay would reject.
+        usable_ids = {
+            str(case.get("case_id"))
+            for case in (eligibility.get("cases") or [])
+            if case.get("usable")
+        }
+        eligible_cases = [
+            {
+                **c,
+                "candidate_id": measured["candidate_id"],
+                "source_run_id": (run_dict or {}).get("run_id"),
+            }
+            for c in measured["cases"]
+            if c.get("bucket") == "success"
+            and c.get("case_id")
+            and str(c.get("case_id")) in usable_ids
+        ]
+
+    # -- persisted activity feed (no synthesized events) --
+    activity: list[dict] = []
+    for cand in candidates[-8:]:
+        dims = ", ".join(cand["dimensions"]) or "—"
+        detail_parts = [f"objective {cand['objective'] or '—'}", dims]
+        if cand["asr"] is not None:
+            detail_parts.append(f"ASR {cand['asr']}")
+        activity.append(
+            {
+                "at": cand["created_at"],
+                "kind": "candidate",
+                "title": "Candidate evaluated",
+                "detail": " · ".join(detail_parts),
+                "candidate_id": cand["candidate_id"],
+            }
+        )
+    if run_dict:
+        if run_dict.get("started_at"):
+            activity.append(
+                {
+                    "at": run_dict["started_at"],
+                    "kind": "run",
+                    "title": "Attacker run started",
+                    "detail": (
+                        f"mode {run_dict.get('mode')} · defense {run_dict.get('defense')} · "
+                        f"target {run_dict.get('target') or 'seeded stand-in'}"
+                    ),
+                }
+            )
+        if run_dict.get("finished_at"):
+            activity.append(
+                {
+                    "at": run_dict["finished_at"],
+                    "kind": "run",
+                    "title": f"Attacker run {run_dict.get('status')}",
+                    "detail": (
+                        f"{run_dict.get('episodes_consumed')}/"
+                        f"{run_dict.get('total_episode_budget')} episodes consumed · "
+                        f"best ASR {run_dict.get('best_asr')}"
+                    ),
+                }
+            )
+    for ev in evaluations[-4:]:
+        result = ev.get("result") or {}
+        activity.append(
+            {
+                "at": ev.get("evaluated_at"),
+                "kind": "defense",
+                "title": "Defense evaluation " + str(result.get("verdict")),
+                "detail": (
+                    f"{ev.get('against')} on {result.get('episodes_evaluated')} case(s) "
+                    f"from run {ev.get('source_run_id')} — "
+                    f"success {((result.get('states') or {}).get('confirmed_success'))} · "
+                    f"blocked {((result.get('states') or {}).get('confirmed_blocked'))}"
+                ),
+            }
+        )
+    activity = [a for a in activity if a.get("at")]
+    activity.sort(key=lambda a: str(a.get("at")), reverse=True)
+
+    connection = get_store().active()
+    provider = _provider_health()
+
+    return {
+        "generated_at": _now_iso(),
+        "connection": connection,
+        "connections": get_store().methods(),
+        "provider": provider,
+        "assistant": status.get("assistant"),
+        "taxonomy": {
+            "objectives": [
+                {"id": i, "name": n}
+                for i, n in zip(
+                    TOP_LEVEL_ATTACK_CATEGORY_IDS, TOP_LEVEL_ATTACK_CATEGORIES
+                )
+            ],
+            "dimensions": [
+                {"id": i, "name": n}
+                for i, n in zip(STRATEGY_DIMENSION_IDS, STRATEGY_DIMENSIONS)
+            ],
+        },
+        "lifecycle": {
+            "phase": phase,
+            "running": bool(status.get("running")),
+            "paused": bool(status.get("paused")),
+            "active_status": ((status.get("current_run") or {}).get("status")),
+            "attacker_complete": bool(run_dict and run_dict.get("status") == "completed"),
+            "barrier_reason": barrier_reason,
+            "eligibility": eligibility,
+        },
+        "settings": {
+            "search_mode": status.get("search_mode"),
+            "defense": status.get("defense"),
+            "target": status.get("target"),
+            "target_kind": status.get("target_kind"),
+            "target_identity": status.get("target_identity"),
+            "assistant_provider": status.get("provider"),
+            "model_request_budget": status.get("model_request_budget"),
+            "selection_budget": status.get("selection_budget"),
+            "limits": {
+                "episodes_per_candidate": MAX_EPISODES,
+                "max_rounds": MAX_MAX_ROUNDS,
+                "iterations": MAX_ITERATIONS,
+                "total_episode_budget": MAX_TOTAL_EPISODE_BUDGET,
+                "model_requests": MAX_MODEL_REQUEST_BUDGET,
+                "approved_experiment_budget": APPROVED_EXPERIMENT_EPISODE_BUDGET,
+            },
+        },
+        "run": run_dict,
+        "active_run": current if isinstance(current, dict) else None,
+        "candidates": candidates[-12:],
+        "history": (run_dict or {}).get("history") or [],
+        "metrics": metrics,
+        "defense": {
+            "catalog": defense_catalog(),
+            "pre_execution": {
+                "suites": _pre_execution_suites(20),
+            },
+            "evaluations": evaluations[-20:],
+            "latest": latest_defense,
+            "state": (latest_defense or {}).get("evaluation_state"),
+            "eligible_cases": eligible_cases,
+        },
+        "activity": activity[:6],
+        "reports": {
+            "runs": [
+                {
+                    "run_id": r.get("run_id"),
+                    "status": r.get("status"),
+                    "started_at": r.get("started_at"),
+                    "finished_at": r.get("finished_at"),
+                    "mode": r.get("mode"),
+                    "defense": r.get("defense"),
+                    "target": r.get("target"),
+                    "target_kind": r.get("target_kind"),
+                    "best_asr": r.get("best_asr"),
+                    "baseline_asr": r.get("baseline_asr"),
+                    "episodes_consumed": r.get("episodes_consumed"),
+                    "total_episode_budget": r.get("total_episode_budget"),
+                    "stop_reason": r.get("stop_reason"),
+                    "confirmation_status": r.get("confirmation_status"),
+                    "candidate_id": r.get("candidate_id"),
+                    "improved": r.get("improved"),
+                    "converged": r.get("converged"),
+                    "global_best_category": r.get("global_best_category"),
+                    "assistant": r.get("assistant"),
+                }
+                for r in runs[-10:]
+            ],
+            "checkpoint": status.get("checkpoint"),
+        },
+        "now": _time.time(),
+    }
+
 
 # ---- ADR metadata (title + raw path) ----
 
@@ -66,14 +840,16 @@ def read_file_text(path: Path) -> str:
 def load_run_stubs():
     """Import run_demo_episode from the stubs module (local, no API)."""
     import sys
+
     project_root = str(PROJECT_ROOT)
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     from adaptive_agent_eval.pipelines.mode2_c1_stubs import run_demo_episode
+
     return run_demo_episode
 
 
-# ---- markdown -> HTML (with a couple of lightweight extensions) ----
+# ---- markdown -> HTML ----
 
 _MARKDOWN_EXTRA = [
     "tables",
@@ -100,7 +876,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
     """Serves the frontend and API endpoints backed by local stub artifacts."""
 
     def __init__(self, *args, **kwargs):
-        # serve static files from frontend/
         super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
 
     # ---- static file serving (index.html etc.) ----
@@ -128,33 +903,120 @@ class DemoHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/adr_index":
             self._serve_adr_index()
             return
-        # static assets (favicon etc.) — fall through to parent
+        if parsed.path == "/api/targets":
+            self._api_targets()
+            return
+        if parsed.path == "/api/overview":
+            self._api_overview()
+            return
+        if parsed.path == "/api/connections":
+            self._api_connections_get()
+            return
+        if parsed.path == "/api/adaptive/status":
+            self._api_adaptive_status()
+            return
+        if parsed.path == "/api/adaptive/monitor":
+            self._api_adaptive_monitor()
+            return
+        if parsed.path == "/api/adaptive/defenses":
+            self._api_adaptive_defenses()
+            return
+        if parsed.path == "/api/adaptive/defense_campaigns":
+            self._api_adaptive_defense_campaigns()
+            return
+        if parsed.path == "/api/adaptive/defense_eval/jobs":
+            self._api_defense_jobs()
+            return
+        if parsed.path == "/api/adaptive/defense_eval/status":
+            self._api_defense_job_status()
+            return
+        if parsed.path == "/api/taxonomy":
+            self._api_taxonomy()
+            return
+        if parsed.path == "/api/gmail/status":
+            self._api_gmail_status()
+            return
+        if parsed.path == "/api/gmail/inbox":
+            self._api_gmail_inbox(parsed)
+            return
+        if parsed.path == "/api/gmail/write_status":
+            self._api_gmail_write_status()
+            return
+        if parsed.path == "/api/gmail/history":
+            self._api_gmail_history(parsed)
+            return
         super().do_GET()
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        ctype = self.headers.get("Content-Type", "")
+        content_len = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_len) if content_len else b"{}"
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            payload = {}
+
         if parsed.path == "/api/run_c1":
             self._api_run_c1()
             return
         if parsed.path == "/api/doc":
-            content_len = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_len) if content_len else b"{}"
-            try:
-                payload = json.loads(body)
-            except json.JSONDecodeError:
-                payload = {}
             self._api_doc(payload.get("name", ""))
             return
         if parsed.path == "/api/adr":
-            content_len = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_len) if content_len else b"{}"
-            try:
-                payload = json.loads(body)
-            except json.JSONDecodeError:
-                payload = {}
             self._api_adr(payload.get("id", ""))
             return
+        if parsed.path == "/api/adaptive/run":
+            self._api_adaptive_run(payload)
+            return
+        if parsed.path == "/api/adaptive/stop":
+            self._api_adaptive_stop()
+            return
+        if parsed.path == "/api/adaptive/pause":
+            self._api_adaptive_pause()
+            return
+        if parsed.path == "/api/adaptive/resume":
+            self._api_adaptive_resume(payload)
+            return
+        if parsed.path == "/api/adaptive/defenses":
+            self._api_adaptive_defenses()
+            return
+        if parsed.path == "/api/adaptive/validate":
+            self._api_adaptive_validate(payload)
+            return
+        if parsed.path == "/api/connections":
+            self._api_connections_post(payload)
+            return
+        if parsed.path == "/api/adaptive/defense_eval":
+            self._api_adaptive_defense_eval(payload)
+            return
+        if parsed.path == "/api/adaptive/defense_execute":
+            self._api_adaptive_defense_execute(payload)
+            return
+        if parsed.path == "/api/adaptive/defense_execute":
+            self._api_adaptive_defense_execute(payload)
+            return
+        if parsed.path == "/api/gmail/connect":
+            self._api_gmail_connect()
+            return
+        if parsed.path == "/api/gmail/inbox":
+            self._api_gmail_inbox(parsed)
+            return
+        if parsed.path == "/api/gmail/analyze":
+            self._api_gmail_analyze(payload)
+            return
+        if parsed.path == "/api/gmail/generate":
+            self._api_gmail_generate(payload)
+            return
+        if parsed.path == "/api/gmail/send":
+            self._api_gmail_send(payload)
+            return
+        if parsed.path == "/api/gmail/draft":
+            self._api_gmail_draft(payload)
+            return
+        if parsed.path == "/api/gmail/kill_switch":
+            self._api_gmail_kill_switch(payload)
+            return
+
         self.send_error(404, "Unknown POST endpoint")
 
     # ---- responses ----
@@ -173,13 +1035,15 @@ class DemoHandler(SimpleHTTPRequestHandler):
 
     def _send_json(self, obj, status=200):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(data)
-
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+        except OSError:
+            print("_send_json abandoned: client already closed connection")
     def _send_html(self, html_text: str, status=200):
         data = html_text.encode("utf-8")
         self.send_response(status)
@@ -194,6 +1058,966 @@ class DemoHandler(SimpleHTTPRequestHandler):
 
     # ---- endpoints ----
 
+    def _api_overview(self):
+        try:
+            self._send_json(build_overview(get_harness()))
+        except Exception as exc:
+            self._send_error(f"overview unavailable: {exc}", 500)
+
+    def _api_connections_get(self):
+        try:
+            from backend.connections import get_store
+
+            store = get_store()
+            self._send_json(
+                {"connections": store.methods(), "active": store.active()}
+            )
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_connections_post(self, payload: dict):
+        """Connect / validate / select / clear a target connection.
+
+        ``connect`` performs a REAL probe (module import + bounded ping for a
+        local Python agent, one bounded HTTP request for an endpoint) and
+        records the outcome. An unavailable method (agent framework) is
+        rejected with its reason — never simulated.
+        """
+        try:
+            from backend.connections import get_store
+
+            store = get_store()
+            action = str(payload.get("action") or "connect")
+            method = str(payload.get("method") or "")
+            if action == "connect":
+                result = store.connect(method, payload.get("config") or {})
+                self._send_json(result, status=200 if result.get("ok") else 400)
+                return
+            if action == "select":
+                result = store.select(method)
+                # Selection is authoritative immediately, not only after a
+                # process restart: future campaigns and the dashboard's target
+                # summary must agree with the store.
+                try:
+                    h = get_harness()
+                    payload = store.target_payload()
+                    if h.running:
+                        result["target_sync"] = "deferred until the active run ends"
+                    elif payload:
+                        h.configure(target=payload)
+                        result["target_sync"] = "applied"
+                except Exception as exc:  # noqa: BLE001 - selection already persisted
+                    result["target_sync_error"] = str(exc)
+                self._send_json(result)
+                return
+            if action == "clear":
+                result = store.clear(method)
+                try:
+                    h = get_harness()
+                    if not h.running and store.target_payload() is None:
+                        h.clear_target()
+                except Exception as exc:  # noqa: BLE001
+                    result["target_sync_error"] = str(exc)
+                self._send_json(result)
+                return
+            self._send_error(f"unknown connection action {action!r}", 400)
+        except ValueError as exc:
+            self._send_error(str(exc), 400)
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    # ---- real Gmail (read-only) ----
+
+    def _api_gmail_status(self):
+        try:
+            self._send_json(gmail_status())
+        except Exception as exc:  # noqa: BLE001 - reported, never hidden
+            self._send_json(
+                {"connected": False, "read_only": True, "error": str(exc)}, status=500
+            )
+
+    @staticmethod
+    def _gmail_auth_failure(exc: Exception) -> bool:
+        name = type(exc).__name__.lower()
+        return any(
+            marker in name
+            for marker in ("gmailauth", "readonlyscope", "refresherror", "invalidgrant")
+        ) or "invalid_grant" in str(exc)
+
+    def _api_gmail_inbox(self, source=None):
+        import urllib.parse as _urlparse
+
+        max_results = 25
+        try:
+            if isinstance(source, dict):
+                max_results = int(source.get("max_results") or 25)
+            elif source is not None:
+                query = _urlparse.parse_qs(source.query)
+                max_results = int((query.get("max_results") or ["25"])[0])
+        except (TypeError, ValueError):
+            max_results = 25
+        max_results = max(1, min(max_results, 50))
+        try:
+            self._send_json(gmail_inbox(max_results=max_results))
+        except Exception as exc:  # noqa: BLE001 - surfaced as a real error
+            is_auth = self._gmail_auth_failure(exc)
+            self._send_json(
+                {
+                    "status": "error",
+                    "provider": "gmail",
+                    "read_only": True,
+                    "reauth_required": is_auth,
+                    "error": str(exc),
+                },
+                status=401 if is_auth else 502,
+            )
+
+    def _api_gmail_analyze(self, payload: dict):
+        try:
+            max_results = int(payload.get("max_results") or 5)
+        except (TypeError, ValueError):
+            max_results = 5
+        max_results = max(1, min(max_results, 10))
+        try:
+            self._send_json(gmail_analyze(max_results=max_results))
+        except Exception as exc:  # noqa: BLE001 - surfaced as a real error
+            is_auth = self._gmail_auth_failure(exc)
+            self._send_json(
+                {
+                    "status": "error",
+                    "provider": "gmail",
+                    "read_only": True,
+                    "reauth_required": is_auth,
+                    "error": str(exc),
+                },
+                status=401 if is_auth else 502,
+            )
+
+    def _api_gmail_write_status(self):
+        try:
+            from backend import gmail_agent
+
+            self._send_json(gmail_agent.write_status())
+        except Exception as exc:  # noqa: BLE001 - surfaced, never hidden
+            self._send_json({"error": str(exc)}, status=500)
+
+    def _api_gmail_history(self, parsed=None):
+        limit = 50
+        try:
+            if parsed is not None:
+                query = parse_qs(parsed.query)
+                limit = int((query.get("limit") or ["50"])[0])
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            from backend import gmail_agent
+
+            self._send_json({"history": gmail_agent.history(limit=limit)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": str(exc)}, status=500)
+
+    def _api_gmail_generate(self, payload: dict):
+        try:
+            from backend import gmail_agent
+
+            draft = gmail_agent.generate(
+                action=str(payload.get("action") or "compose"),
+                recipient=str(payload.get("recipient") or ""),
+                instruction=str(payload.get("instruction") or ""),
+                message_id=payload.get("message_id"),
+            )
+            self._send_json(draft)
+        except Exception as exc:  # noqa: BLE001 - a model failure is a real error
+            status = int(getattr(exc, "http_status", 0) or 0) or 502
+            self._send_json(
+                {"status": "error", "error": str(exc), "generated": False},
+                status=status,
+            )
+
+    def _api_gmail_send(self, payload: dict):
+        try:
+            from backend import gmail_agent
+
+            result = gmail_agent.send(payload)
+            # A policy refusal is a real, expected result (not a transport
+            # error): return it as 200 so the UI can show the exact reason.
+            self._send_json(result)
+        except Exception as exc:  # noqa: BLE001
+            status = int(getattr(exc, "http_status", 0) or 0) or 500
+            self._send_json(
+                {"sent": False, "status": "error", "error": str(exc)}, status=status
+            )
+
+    def _api_gmail_draft(self, payload: dict):
+        """Create one real Gmail draft. Never sends; reports Gmail's own id."""
+        try:
+            from backend import gmail_agent
+
+            result = gmail_agent.save_draft(payload)
+            self._send_json(result)
+        except Exception as exc:  # noqa: BLE001
+            status = int(getattr(exc, "http_status", 0) or 0) or 500
+            self._send_json(
+                {"drafted": False, "status": "error", "error": str(exc)}, status=status
+            )
+
+    def _api_gmail_kill_switch(self, payload: dict):
+        try:
+            from backend import gmail_agent
+
+            record = gmail_agent.set_kill_switch(
+                engage=bool(payload.get("engage")),
+                reason=str(payload.get("reason") or ""),
+            )
+            self._send_json({"kill_switch": record})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": str(exc)}, status=500)
+
+    def _api_gmail_connect(self):
+        try:
+            self._send_json(start_gmail_connect())
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"started": False, "error": str(exc)}, status=500)
+
+    def _api_targets(self):
+        try:
+            from adaptive_agent_eval.target.adapter import get_target_registry
+
+            decls = get_target_registry().list_declarations()
+            self._send_json(decls)
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_status(self):
+        try:
+            h = get_harness()
+            self._send_json(h.status())
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_monitor(self):
+        try:
+            h = get_harness()
+            self._send_json(h.monitor())
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_run(self, payload: dict):
+        try:
+            h = get_harness()
+            from backend.adaptive_harness import (
+                DEFAULT_EPISODES,
+                DEFAULT_MAX_ROUNDS,
+                DEFAULT_ITERATIONS,
+                DEFAULT_SELECTION_BUDGET,
+            )
+
+            episodes = int(payload.get("episodes") or DEFAULT_EPISODES)
+            max_rounds = int(payload.get("max_rounds") or DEFAULT_MAX_ROUNDS)
+            iterations = int(payload.get("iterations") or DEFAULT_ITERATIONS)
+            seed = payload.get("seed")
+            seed = int(seed) if seed is not None else None
+            mode = str(payload.get("mode") or "greedy")
+            # ATTACK-ONLY CAMPAIGN: Run Experiment never executes Nemesis
+            # defense logic. Any defense value supplied by a client is ignored
+            # here; defense runs only through the explicit Defense action.
+            defense = "none"
+            requested_defense = payload.get("defense")
+            selection_budget = int(payload.get("selection_budget") or DEFAULT_SELECTION_BUDGET)
+            total_budget = payload.get("total_episode_budget")
+            total_budget = int(total_budget) if total_budget is not None else None
+            background = bool(payload.get("background", True))
+            # Optional assistant provider selection (Phase 6B): explicit,
+            # validated by the harness; a live provider without credentials
+            # or an unknown provider is a 400 — never a silent fake fallback.
+            provider = payload.get("provider")
+            provider = str(provider) if provider is not None else None
+            model_budget = payload.get("model_request_budget")
+            model_budget = int(model_budget) if model_budget is not None else None
+            # Target configuration (Parts 2/4): a target id, an inline BYOA
+            # adapter spec, or an HTTP API config. When the caller omits it,
+            # the ACTIVE connection is used — and when no connection is active
+            # the harness keeps its explicitly-labelled seeded stand-in. A
+            # broken connection is never silently replaced by a fixture.
+            target = payload.get("target")
+            if isinstance(target, dict) and (
+                str(target.get("kind") or "") in {"user_byoa", "byoa"}
+                or target.get("module")
+                or target.get("entry")
+            ):
+                # The Local Python Agent integration is retired: an inline BYOA
+                # spec is rejected here rather than executed in-process.
+                self._send_error(
+                    "Local Python Agent targets are retired; expose the agent "
+                    "behind a JSON HTTP endpoint and use the HTTP API method",
+                    400,
+                )
+                return
+            if target is None:
+                from backend.connections import get_store
+
+                target = get_store().target_payload()
+                if target is None:
+                    # An explicitly cleared selection must not silently reuse
+                    # the target from a previous campaign.
+                    h.clear_target()
+            categories = payload.get("attack_categories")
+
+            res = h.start(
+                episodes=episodes,
+                max_rounds=max_rounds,
+                iterations=iterations,
+                seed=seed,
+                background=background,
+                mode=mode,
+                defense=defense,
+                selection_budget=selection_budget,
+                total_episode_budget=total_budget,
+                provider=provider,
+                model_request_budget=model_budget,
+                target=target,
+                attack_categories=categories,
+            )
+            if isinstance(res, dict):
+                res["campaign_defense"] = "none"
+                res["requested_defense"] = requested_defense
+            try:
+                self._send_json(res)
+            except Exception as exc:
+                # The handler's poll loop is still iterating; prevent the
+                # response write from destroying the connection and sliding
+                # the current HandleRequest into the exception traceback.
+                logger.error("response write failed after run=200: %s", exc, exc_info=True)
+        except ValueError as exc:
+            self._send_error(str(exc), 400)
+        except RuntimeError as exc:
+            self._send_error(str(exc), 409)
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_stop(self):
+        try:
+            h = get_harness()
+            self._send_json(h.stop())
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_pause(self):
+        try:
+            self._send_json(get_harness().pause())
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_resume(self, payload: dict):
+        try:
+            h = get_harness()
+            # "Resume" on the active experiment means continuing the SAME
+            # paused run. Checkpoint recovery remains the fallback only when
+            # there is no paused active run.
+            if h.paused:
+                self._send_json(h.resume_paused())
+                return
+            run_id = str(payload.get("run_id") or "") or None
+            background = bool(payload.get("background", True))
+            res = h.resume(background=background, run_id=run_id)
+            self._send_json(res)
+        except Exception as exc:
+            self._send_error(str(exc), 400)
+
+    def _api_adaptive_defense_campaigns(self):
+        """Completed attacker campaigns an operator may choose for defense.
+
+        Read-only. Opening the Defenses page never starts a job; the operator
+        must select a campaign, select saved cases, and press Run Defense.
+        """
+        try:
+            from backend.defense_eval import defense_catalog
+
+            self._send_json(
+                {
+                    "campaigns": get_harness().completed_attack_runs(),
+                    "defenses": defense_catalog(),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced, not hidden
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_defense_execute(self, payload: dict):
+        """Two-phase pre-execution check for one completed campaign + defense.
+
+        This is a separate Defenses action. It captures proposals from the
+        cooperative local target, asks the selected defense, and only invokes
+        the instrumented executor after an ALLOW.
+        """
+        from backend import pre_execution
+
+        h = get_harness()
+        run_id = str(payload.get("run_id") or "")
+        defense = str(payload.get("defense") or "")
+        if not run_id:
+            self._send_error("run_id is required", 400)
+            return
+        run = h.attack_run(run_id)
+        if run is None:
+            self._send_error(f"unknown run {run_id!r}", 404)
+            return
+        if run.get("status") != "completed":
+            self._send_error("pre-execution check requires a completed campaign", 409)
+            return
+        if not defense:
+            self._send_error("defense is required", 400)
+            return
+        try:
+            result = pre_execution.run_suite(run, defense)
+        except ValueError as exc:
+            self._send_error(str(exc), 400)
+            return
+        except Exception as exc:  # noqa: BLE001 - surfaced, not hidden
+            self._send_json(
+                {"error": f"pre-execution check failed: {type(exc).__name__}: {exc}"},
+                status=500,
+            )
+            return
+        self._send_json(result)
+
+    def _api_adaptive_defense_execute(self, payload: dict):
+        """Two-phase pre-execution check for one completed campaign + defense.
+
+        Separate Defenses action: the cooperative target proposes an action,
+        the defense decides, and only an ALLOW can invoke the executor.
+        """
+        from backend import pre_execution
+
+        h = get_harness()
+        run_id = str(payload.get("run_id") or "")
+        defense = str(payload.get("defense") or "")
+        if not run_id:
+            self._send_error("run_id is required", 400)
+            return
+        run = h.attack_run(run_id)
+        if run is None:
+            self._send_error(f"unknown run {run_id!r}", 404)
+            return
+        if run.get("status") != "completed":
+            self._send_error("pre-execution check requires a completed campaign", 409)
+            return
+        if not defense:
+            self._send_error("defense is required", 400)
+            return
+        try:
+            result = pre_execution.run_suite(run, defense)
+        except ValueError as exc:
+            self._send_error(str(exc), 400)
+            return
+        except Exception as exc:  # noqa: BLE001 - surfaced, not hidden
+            self._send_json(
+                {"error": f"pre-execution check failed: {type(exc).__name__}: {exc}"},
+                status=500,
+            )
+            return
+        self._send_json(result)
+
+    def _api_adaptive_defense_eval(self, payload: dict):
+        """Start a defense replay (background by default) or run it inline.
+
+        This endpoint is the ONLY way a defense evaluation begins. It is not
+        called by attacker start/completion. The request names a completed
+        campaign and the exact saved case ids to replay; no attack is
+        regenerated and no case is taken from another campaign.
+
+        Background start returns 202 with an evaluation id immediately; the
+        worker persists queued/running/progress/terminal state and the HTTP
+        handler is free to answer /api/overview. ``sync: true`` preserves the
+        inline behavior for callers that need the completed entry at once.
+        """
+        try:
+            from backend.defense_eval import select_saved_cases
+            from backend.adaptive_harness import DEFENSE_CHOICES
+
+            h = get_harness()
+            candidate_id = str(payload.get("candidate_id") or "")
+            run_id = payload.get("run_id")
+            run_id = str(run_id) if run_id else None
+            # The campaign is the primary selection. Its candidate id is
+            # resolved from the persisted run when the caller omits it; a run
+            # never silently borrows a candidate from another campaign.
+            if not candidate_id and run_id:
+                run = h.attack_run(run_id)
+                if run:
+                    candidate_id = str(run.get("candidate_id") or "")
+            if not candidate_id:
+                self._send_error(
+                    "candidate_id or a completed run_id is required", 400
+                )
+                return
+            defense = payload.get("defense") or payload.get("against") or None
+            if not defense:
+                self._send_error("defense is required", 400)
+                return
+            if defense not in DEFENSE_CHOICES:
+                self._send_error(
+                    f"unknown defense {defense!r}; choices are {DEFENSE_CHOICES}",
+                    400,
+                )
+                return
+            seed = payload.get("seed")
+            seed = int(seed) if seed is not None else None
+
+            eligibility = h.defense_phase_eligibility(
+                candidate_id, run_id=run_id
+            )
+            if not eligibility.get("eligible"):
+                reason = str(eligibility.get("reason") or "")
+                status = 404 if reason.startswith("unknown candidate") else 409
+                self._send_json(
+                    {
+                        "error": (
+                            reason
+                            if status == 404
+                            else "run not eligible for defense evaluation: "
+                            + reason
+                        ),
+                        "eligibility": eligibility,
+                        "eligible_case_ids": [],
+                        "excluded_cases": eligibility.get("cases") or [],
+                    },
+                    status=status,
+                )
+                return
+
+            saved_cases = list(eligibility.get("cases") or [])
+            requested_raw = payload.get("case_ids")
+            if requested_raw is not None:
+                if not isinstance(requested_raw, list) or not requested_raw:
+                    self._send_json(
+                        {
+                            "error": (
+                                "case_ids must be a non-empty list of saved "
+                                "case ids; an empty selection never starts an "
+                                "evaluation"
+                            ),
+                            "eligibility": eligibility,
+                            "eligible_case_ids": [
+                                str(c.get("case_id"))
+                                for c in saved_cases
+                                if c.get("usable")
+                            ],
+                        },
+                        status=400,
+                    )
+                    return
+                requested_case_ids = [
+                    str(c) for c in requested_raw if c is not None and str(c)
+                ]
+            else:
+                requested_case_ids = None
+
+            selected, excluded = select_saved_cases(
+                saved_cases, requested_case_ids
+            )
+            if not selected:
+                self._send_json(
+                    {
+                        "error": (
+                            "no eligible saved cases were selected; the "
+                            "evaluation was not started"
+                        ),
+                        "eligibility": eligibility,
+                        "eligible_case_ids": [
+                            str(c.get("case_id"))
+                            for c in saved_cases
+                            if c.get("usable")
+                        ],
+                        "excluded_cases": excluded,
+                    },
+                    status=409,
+                )
+                return
+
+            selected_ids = [
+                str(c.get("case_id")) for c in selected if c.get("case_id")
+            ]
+            # Eligibility already ties the candidate to this exact run. The
+            # target identity is the one recorded by that run — never the
+            # dashboard's current target.
+            run = h.attack_run(eligibility.get("source_run_id") or run_id or "")
+            snapshot = (run or {}).get("target_snapshot")
+            target_identity = (
+                {k: v for k, v in snapshot.items() if k != "fingerprint"}
+                if isinstance(snapshot, dict)
+                else None
+            )
+
+            from backend.defense_jobs import get_manager
+
+            def work(job, progress):
+                progress({"phase": "replaying", "cases_total": len(selected_ids)})
+                return h.defense_evaluation(
+                    candidate_id,
+                    against=defense,
+                    seed=seed,
+                    run_id=eligibility.get("source_run_id") or run_id,
+                    progress_cb=progress,
+                    case_ids=selected_ids,
+                    # The job's identity IS the evaluation identity, persisted
+                    # with the evidence so it survives a restart.
+                    evaluation_id=job["evaluation_id"],
+                )
+
+            job = get_manager().start(
+                request={
+                    "candidate_id": candidate_id,
+                    "run_id": eligibility.get("source_run_id") or run_id,
+                    "against": defense,
+                    "defense": defense,
+                    "seed": seed,
+                    "case_ids": selected_ids,
+                    "selected_cases": selected,
+                    "excluded_cases": excluded,
+                    "target_identity": target_identity,
+                    "cases_total": len(selected_ids),
+                },
+                work=work,
+            )
+            if bool(payload.get("sync")):
+                # Inline callers wait for the SAME job so even an inline
+                # defense evaluation carries its own unique evaluation id.
+                deadline = time.time() + 180
+                while job.get("state") in {"queued", "running"} and time.time() < deadline:
+                    time.sleep(0.05)
+                    job = get_manager().get(job["evaluation_id"]) or job
+                entry = job.get("result")
+                if entry is None:
+                    self._send_json(
+                        {
+                            "evaluation_id": job["evaluation_id"],
+                            "candidate_id": candidate_id,
+                            "against": defense,
+                            "job": job,
+                            "error": job.get("error") or "defense evaluation did not complete",
+                        },
+                        status=500
+                        if job.get("state") == "technical_failure"
+                        else 202,
+                    )
+                    return
+                merged = dict(entry)
+                merged["evaluation_id"] = job["evaluation_id"]
+                merged["job"] = job
+                self._send_json(merged)
+                return
+            self._send_json(
+                {
+                    "evaluation_id": job["evaluation_id"],
+                    "job_id": job.get("job_id") or job["evaluation_id"],
+                    "state": job["state"],
+                    "job": job,
+                    "eligibility": eligibility,
+                    "selected_case_ids": selected_ids,
+                    "excluded_cases": excluded,
+                },
+                status=202,
+            )
+        except KeyError as exc:
+            self._send_error(str(exc), 404)
+        except ValueError as exc:
+            self._send_error(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001 - surfaced, not hidden
+            self._send_error(str(exc), 500)
+
+    def _api_defense_job_status(self):
+        try:
+            from urllib.parse import parse_qs
+
+            query = parse_qs(urlparse(self.path).query)
+            evaluation_id = str((query.get("evaluation_id") or [""])[0])
+            from backend.defense_jobs import get_manager
+
+            job = get_manager().get(evaluation_id)
+            if job is None:
+                self._send_error("unknown defense evaluation", 404)
+                return
+            self._send_json({"job": job})
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_defense_jobs(self):
+        try:
+            from backend.defense_jobs import get_manager
+
+            self._send_json({"jobs": get_manager().list()})
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_taxonomy(self):
+        """The fixed experiment taxonomy the UI must render verbatim (Part 10.1)."""
+        try:
+            from adaptive_agent_eval.contracts import (
+                STRATEGY_DIMENSIONS,
+                STRATEGY_DIMENSION_IDS,
+                TOP_LEVEL_ATTACK_CATEGORIES,
+                TOP_LEVEL_ATTACK_CATEGORY_IDS,
+            )
+            from backend.adaptive_harness import (
+                APPROVED_EXPERIMENT_EPISODE_BUDGET,
+                MAX_EPISODES,
+                MAX_ITERATIONS,
+                MAX_MAX_ROUNDS,
+                MAX_MODEL_REQUEST_BUDGET,
+                MAX_TOTAL_EPISODE_BUDGET,
+                SEARCH_MODES,
+                SOPHISTICATION_LEVELS,
+            )
+
+            self._send_json(
+                {
+                    "attack_categories": list(TOP_LEVEL_ATTACK_CATEGORIES),
+                    "attack_category_ids": list(TOP_LEVEL_ATTACK_CATEGORY_IDS),
+                    "strategy_dimensions": list(STRATEGY_DIMENSIONS),
+                    "strategy_dimension_ids": list(STRATEGY_DIMENSION_IDS),
+                    "search_modes": list(SEARCH_MODES),
+                    "sophistication_levels": list(SOPHISTICATION_LEVELS),
+                    "approved_episode_budget": APPROVED_EXPERIMENT_EPISODE_BUDGET,
+                    "limits": {
+                        "episodes_per_candidate": MAX_EPISODES,
+                        "max_rounds": MAX_MAX_ROUNDS,
+                        "iterations": MAX_ITERATIONS,
+                        "total_episode_budget": MAX_TOTAL_EPISODE_BUDGET,
+                        "model_requests": MAX_MODEL_REQUEST_BUDGET,
+                    },
+                }
+            )
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_defenses(self):
+        """Selectable defenses with honest implementation labels (Part 6.2/6.3)."""
+        try:
+            from backend.defense_eval import defense_catalog
+
+            self._send_json({"defenses": defense_catalog()})
+        except Exception as exc:
+            self._send_error(str(exc), 500)
+
+    def _api_adaptive_validate(self, payload: dict):
+        """Validate target + provider readiness BEFORE any run starts (Part 9).
+
+        Never executes an experiment: imports and validates the configured
+        BYOA adapter (or a registered target id) and reports Ollama/provider
+        readiness with an explicit health diagnostic.
+        """
+        from adaptive_agent_eval.contracts import (
+            STRATEGY_DIMENSIONS,
+            TOP_LEVEL_ATTACK_CATEGORIES,
+        )
+        from backend.adaptive_harness import ASSISTANT_PROVIDER_CHOICES
+
+        out: dict = {
+            "attack_categories": list(TOP_LEVEL_ATTACK_CATEGORIES),
+            "strategy_dimensions": list(STRATEGY_DIMENSIONS),
+            "provider_choices": list(ASSISTANT_PROVIDER_CHOICES),
+            "target": None,
+            "provider": None,
+            "ok": True,
+            "errors": [],
+        }
+        # --- target validation ---
+        # An omitted target resolves to the ACTIVE connection, exactly like
+        # ``/adaptive/run``; only when no connection is active does validation
+        # describe the seeded stand-in. A connected-but-broken target is
+        # reported as an error, never silently downgraded to the stand-in.
+        target = payload.get("target")
+        if target is None:
+            from backend.connections import get_store
+
+            target = get_store().target_payload()
+        try:
+            from adaptive_agent_eval.target.adapter import get_target_registry
+
+            if target is None:
+                out["target"] = {
+                    "id": None,
+                    "kind": "seeded-simulation",
+                    "note": (
+                        "no target configured: episodes run against the seeded "
+                        "deterministic stand-in, clearly labelled as simulated"
+                    ),
+                }
+            elif isinstance(target, dict) and str(
+                target.get("kind") or ""
+            ).lower() in {"http_api", "http", "remote_http"} or (
+                isinstance(target, dict) and target.get("endpoint_url")
+            ):
+                from adaptive_agent_eval.target.adapter import (
+                    ExternalHttpTargetAdapter,
+                )
+                from backend.connections import probe_http_endpoint
+
+                endpoint = str(target.get("endpoint_url") or "")
+                try:
+                    adapter = ExternalHttpTargetAdapter(
+                        target_id=str(target.get("target_id") or "http-api-target"),
+                        name=str(target.get("name") or "HTTP API agent"),
+                        endpoint_url=endpoint,
+                        auth_header=target.get("auth_header") or None,
+                        timeout_seconds=float(target.get("timeout_seconds", 15.0)),
+                    )
+                    decl = adapter.declaration()
+                    probe = probe_http_endpoint(
+                        endpoint,
+                        auth_header=target.get("auth_header") or None,
+                        timeout_seconds=min(float(target.get("timeout_seconds", 15.0)), 30.0),
+                    )
+                    out["target"] = {
+                        "id": decl.target_id,
+                        "name": decl.name,
+                        "execution_mode": decl.execution_mode,
+                        "kind": "user_http_api",
+                        "reachable": bool(probe.get("ok")),
+                        "status_code": probe.get("status_code"),
+                        "probe_error": probe.get("error"),
+                    }
+                    if not probe.get("ok"):
+                        out["ok"] = False
+                        out["errors"].append(
+                            probe.get("error") or "HTTP endpoint did not answer the probe"
+                        )
+                except Exception as exc:  # noqa: BLE001 - reported verbatim
+                    out["ok"] = False
+                    out["errors"].append(str(exc))
+                    out["target"] = {"id": None, "kind": "user_http_api", "error": str(exc)}
+            elif isinstance(target, dict) and str(
+                target.get("kind") or ""
+            ).lower() in {"gmail_agent_write", "gmail_write"}:
+                # Real Gmail agent read/draft/send evaluation target. Validation
+                # constructs the adapter (which enforces the send/recipient
+                # guards) but never performs a Gmail operation.
+                from adaptive_agent_eval.target.gmail_agent_write import (
+                    GmailAgentTargetAdapter,
+                )
+
+                try:
+                    adapter = GmailAgentTargetAdapter(
+                        target_id=str(target.get("target_id") or "gmail-write-agent"),
+                        mode=str(target.get("mode") or "read_only"),
+                        recipient=str(target.get("recipient") or ""),
+                        max_results=int(target.get("max_results") or 5),
+                        timeout_seconds=float(target.get("timeout_seconds") or 180.0),
+                        allow_send=bool(target.get("allow_send")),
+                    )
+                    decl = adapter.declaration()
+                    out["target"] = {
+                        "id": decl.target_id,
+                        "name": decl.name,
+                        "execution_mode": decl.execution_mode,
+                        "kind": "gmail_agent_write",
+                        "mode": str(target.get("mode") or "read_only"),
+                        "supported_tools": list(decl.supported_tools),
+                    }
+                except Exception as exc:  # noqa: BLE001 - reported verbatim
+                    out["ok"] = False
+                    out["errors"].append(str(exc))
+                    out["target"] = {
+                        "id": None,
+                        "kind": "gmail_agent_write",
+                        "error": str(exc),
+                    }
+            elif isinstance(target, dict):
+                # Local Python Agent / inline BYOA specs are retired product
+                # integrations: they are never validated or executed here.
+                out["ok"] = False
+                out["errors"].append(
+                    "Local Python Agent targets are retired; expose the agent "
+                    "behind a JSON HTTP endpoint and use the HTTP API method"
+                )
+                out["target"] = {"id": None, "kind": "retired"}
+            else:
+                adapter = get_target_registry().get(str(target))
+                decl = adapter.declaration()
+                from adaptive_agent_eval.target.byoa import AdapterTargetAgent
+
+                identity = AdapterTargetAgent(adapter).identity()
+                out["target"] = {
+                    "id": decl.target_id,
+                    "name": decl.name,
+                    "execution_mode": decl.execution_mode,
+                    "kind": identity["kind"],
+                    "adapter_version": identity["adapter_version"],
+                    "capabilities": sorted(c.value for c in decl.capabilities),
+                    "supported_tools": list(decl.supported_tools),
+                }
+        except Exception as exc:
+            out["ok"] = False
+            out["errors"].append(str(exc))
+            out["target"] = {"error": str(exc)}
+        # --- provider validation (no secret values ever returned) ---
+        provider = payload.get("provider")
+        provider = str(provider) if provider else None
+        try:
+            if provider in (None, "none", "rules_only"):
+                out["provider"] = {
+                    "provider": provider or "none",
+                    "kind": (
+                        "rules_only" if provider == "rules_only" else "none"
+                    ),
+                    "ready": True,
+                    "note": "no model requests will be made",
+                }
+            elif provider == "fake":
+                out["provider"] = {
+                    "provider": "fake",
+                    "kind": "fake",
+                    "ready": True,
+                    "note": "offline deterministic double (tests only)",
+                }
+            elif provider == "ollama":
+                from adaptive_agent_eval.llm.provider import (
+                    OllamaConfig,
+                    ollama_health_check,
+                )
+
+                health = ollama_health_check()
+                out["provider"] = {
+                    "provider": "ollama",
+                    "kind": "live",
+                    "ready": bool(health.get("reachable") and health.get("model_available")),
+                    "endpoint": OllamaConfig.DEFAULT_ENDPOINT,
+                    "model": health.get("model"),
+                    "reachable": health.get("reachable"),
+                    "model_available": health.get("model_available"),
+                    "error_category": health.get("error_category"),
+                    "error": health.get("error"),
+                }
+                if not out["provider"]["ready"]:
+                    out["ok"] = False
+                    out["errors"].append(health.get("error") or "Ollama not ready")
+            else:
+                from adaptive_agent_eval.llm.provider import make_provider_config
+
+                cfg = make_provider_config(provider)
+                try:
+                    cfg.api_key()
+                    out["provider"] = {
+                        "provider": provider,
+                        "kind": "live",
+                        "ready": True,
+                        "model": cfg.model_for_role("attacker"),
+                    }
+                except RuntimeError as exc:
+                    out["ok"] = False
+                    out["errors"].append(str(exc))
+                    out["provider"] = {
+                        "provider": provider,
+                        "kind": "live",
+                        "ready": False,
+                        "error": str(exc),
+                    }
+        except Exception as exc:
+            out["ok"] = False
+            out["errors"].append(str(exc))
+            out["provider"] = {"provider": provider, "ready": False, "error": str(exc)}
+        self._send_json(out, status=200 if out["ok"] else 400)
+
     def _api_run_c1(self):
         try:
             runner = load_run_stubs()
@@ -201,8 +2025,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
             self._send_error(f"Failed to load stub runner: {exc}")
             return
         try:
-            result = runner(config_id="C1", max_rounds=2, n_episodes=2, seed=42,
-                            results_dir=DEFAULT_RESULTS)
+            result = runner(
+                config_id="C1",
+                max_rounds=2,
+                n_episodes=2,
+                seed=42,
+                results_dir=DEFAULT_RESULTS,
+            )
         except Exception as exc:
             self._send_error(f"run_demo_episode failed: {exc}")
             return
@@ -251,67 +2080,58 @@ class DemoHandler(SimpleHTTPRequestHandler):
             "experiment_plan": DOCS_DIR / "EXPERIMENT_PLAN.md",
         }
         path = mapping.get(name)
-        if not path:
-            self._send_error(f"Unknown doc '{name}'. Choose: {list(mapping.keys())}")
+        if not path or not path.exists():
+            self._send_error(f"Unknown or missing document: {name}", 404)
             return
-        text = read_file_text(path)
-        if not path.exists():
-            self._send_error(f"Doc file not found: {path}")
-            return
+        text = path.read_text(encoding="utf-8", errors="replace")
         html_fragment = render_markdown(text)
-        self._send_json({"html": html_fragment})
+        self._send_html(html_fragment)
 
     def _api_adr(self, adr_id: str):
-        adr_path = DOCS_DIR / "ARCHITECTURE_DECISIONS.md"
-        text = read_file_text(adr_path)
-        if not adr_path.exists():
-            self._send_error("ADR document not found.")
+        path = DOCS_DIR / "ARCHITECTURE_DECISIONS.md"
+        if not path.exists():
+            self._send_error("ARCHITECTURE_DECISIONS.md not found", 404)
             return
-        # Extract the ADR section from the markdown source.
+        full_text = path.read_text(encoding="utf-8", errors="replace")
+        chunk = _extract_adr_section(full_text, adr_id)
+        if not chunk:
+            self._send_error(f"ADR not found: {adr_id}", 404)
+            return
         entry = next((a for a in ADR_INDEX if a["id"] == adr_id), None)
         if not entry:
-            self._send_error(f"Unknown ADR '{adr_id}'.")
-            return
-        section = _extract_adr_section(text, adr_id)
-        if not section:
-            self._send_error(f"ADR section '{adr_id}' not found in source.")
-            return
-        html_fragment = render_markdown(section)
+            entry = {"id": adr_id, "title": adr_id}
+        html_fragment = render_markdown(chunk)
         self._send_json({"html": html_fragment, "title": entry["title"]})
 
 
 def _extract_adr_section(text: str, adr_id: str) -> str:
     """Grab the markdown chunk for a given ADR id from ARCHITECTURE_DECISIONS.md."""
-    # Match the heading line like "### ADR-001: Controller is Non-LLM Python"
     pattern = re.compile(rf"^###\s+{re.escape(adr_id)}:.*$", re.MULTILINE)
     m = pattern.search(text)
     if not m:
         return ""
     start = m.start()
-    # Find the next "### " after start.
     rest = text[m.end():]
     next_m = re.search(r"^###\s+", rest, re.MULTILINE)
     end = m.end() + (next_m.start() if next_m else len(rest))
     return text[start:end].strip()
 
 
-# ---- CLI ----
-
-
 def main(port: int = 8000):
     os.chdir(FRONTEND_DIR)
-    server = HTTPServer(("127.0.0.1", port), DemoHandler)
-    print(f"Nemesis Stitch MCP Demo — http://127.0.0.1:{port}")
-    print("  /            index.html")
-    print("  /app.js      frontend logic")
-    print("  /styles.css  theme")
-    print("  /api/run_c1           POST — run 2 episodes, return result dict")
-    print("  /api/episodes_csv     GET  — episodes.csv")
-    print("  /api/episodes_jsonl   GET  — episodes.json (JSONL)")
-    print("  /api/config_summary   GET  — config_summary.json")
-    print("  /api/doc              POST — render RESULTS_TEMPLATE.md / EXPERIMENT_PLAN.md")
-    print("  /api/adr_index        GET  — ADR list")
-    print("  /api/adr              POST — render a single ADR")
+    server = ThreadingHTTPServer(("127.0.0.1", port), DemoHandler)
+    # Worker threads must not keep the process alive after shutdown.
+    server.daemon_threads = True
+    print(f"Nemesis AI Dashboard — http://127.0.0.1:{port}")
+    print("  /api/overview           GET  — Persisted dashboard aggregate")
+    print("  /api/connections        GET/POST — Target connections (real probe)")
+    print("  /api/adaptive/status    GET  — Adaptive harness state & candidates")
+    print("  /api/adaptive/monitor   GET  — In-flight progress monitor")
+    print("  /api/adaptive/run       POST — Start bounded adaptive evaluation")
+    print("  /api/adaptive/stop      POST — Signal evaluation to stop")
+    print("  /api/adaptive/resume    POST — Resume interrupted checkpoint")
+    print("  /api/adaptive/defense_eval POST — Replay attack against defense (4-state)")
+    print("  /api/targets            GET  — List supported target adapters")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -320,5 +2140,10 @@ def main(port: int = 8000):
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    main(port)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Nemesis dashboard server")
+    parser.add_argument("port", nargs="?", type=int, default=8000)
+    parser.add_argument("--port", dest="port_flag", type=int)
+    args = parser.parse_args()
+    main(args.port_flag or args.port)

@@ -1,0 +1,48 @@
+{
+  "allowlist_result": "PASS",
+  "bcc": [],
+  "body": "This is a controlled test email sent by the Nemesis Gmail workflow to verify real Gmail delivery after the Phase 1B safety remediation. No further action is required.",
+  "cc": [],
+  "defense": {
+    "decision": "allow",
+    "indicators": [],
+    "kind": "new",
+    "message_id": "a6e12249e97d40f291b7a3b35178bc19",
+    "reasons": [
+      "score 0.05 -> risk_level \"low\", decision \"allow\" (review >= 0.15, flag >= 0.50); recommendation only \u2014 no Gmail action is executed."
+    ],
+    "risk_level": "low",
+    "risk_score": 0.05,
+    "rule_version": "threat-rules-v1",
+    "source": "deterministic_rules",
+    "threat_types": []
+  },
+  "in_reply_to": null,
+  "kill_switch": {
+    "actor": "system",
+    "defaulted": false,
+    "durable": true,
+    "engaged": true,
+    "reason": "safe default on first initialization",
+    "source": "persistent",
+    "updated_at": "2026-11-05T06:32:47Z"
+  },
+  "kind": "new",
+  "message_fingerprint_sha256": "aabf2b110563f78e2d2614801fe9d1bb1af050b3c3b940087e2d64da923de9bb",
+  "mode": "simulation",
+  "prepared_artifact_id": "a6e12249e97d40f291b7a3b35178bc19",
+  "prepared_at": "2026-11-05T07:28:50+00:00",
+  "rate_limit_per_hour": 5,
+  "rate_limit_remaining": 5,
+  "references": [],
+  "required_authorization": "explicit owner approval of this exact message",
+  "sender": "wuttisthisnishi@gmail.com",
+  "status": "awaiting_owner_approval",
+  "subject": "Nemesis Gmail Live-Send Verification",
+  "thread_id": null,
+  "to": [
+    "anoushkas2006@gmail.com"
+  ],
+  "transport": "mock",
+  "transport_executes_live_actions": false
+}

@@ -18,6 +18,32 @@
 
 ---
 
+## Reporting rules (product contract)
+
+These rules govern every table, figure, and analysis produced from these
+templates (PRD §1.9–1.12, [METRICS_DEFINITIONS.md](METRICS_DEFINITIONS.md)
+§1.5–1.6):
+
+- Report outcomes in the four product classes — **confirmed success,
+  confirmed blocked, inconclusive, technical failure** — kept separate from
+  each other and per security objective (access / exfiltration /
+  disclosure). Technical failures are never counted as blocks; inconclusive
+  is never presented as a success or block.
+- **Detect ≠ prevent:** `detected_not_blocked` is reported as a detection
+  with the effect still occurring ([CONTRACTS.md §4](CONTRACTS.md)).
+- Missing metrics render as `—` / `Not measured` (`null`), never `0.0`, and
+  incomplete configurations are never shown as complete.
+- Placeholder, mock, or deterministic-simulation results must be labeled as
+  such — never presented as real experiment results or live red-team results.
+- AI-generated analyses (attacker and defense) summarize **persisted
+  evidence only**; they may not reclassify outcomes, invent results, or
+  override measured values (PRD §1.12).
+- State which defense implementation ran (`DefenseImplementation`) — the
+  shipped CaMeL/Progent/Verifier components are simplified proxies
+  (PRD §1.13).
+
+---
+
 ## 1. Results Table Format
 
 ### 1.1 Mode 1: Single-Agent Baseline Results

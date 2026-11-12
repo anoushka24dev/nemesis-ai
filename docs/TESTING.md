@@ -78,6 +78,20 @@ test_metrics_asr_computation_with_zero_successes
 | Time | Mock time.time() | Deterministic timestamps |
 | Random | Set random.seed() | Reproducible results |
 
+### 1.5 Product-level test obligations (documentation-aligned)
+
+Beyond component tests, the product vision imposes these test expectations
+(PRD §1.10–1.12; status noted honestly):
+
+| Obligation | Status |
+|------------|--------|
+| Deterministic, isolated, inexpensive tests — no paid LLM calls, no real mailbox mutations, no full-matrix runs in CI | **Enforced today** (runner safety invariants, Gmail read-only tests) |
+| Bounded smoke test must pass before any large run is enabled | **Enforced today** for the runner (10 default / 50 absolute cap); required of the eventual product runner |
+| Search algorithms tested separately: greedy acceptance, feedback ordering, gate behavior | **Enforced today** (`tests/test_hill_climb.py`, `tests/test_phase4_feedback.py`, `tests/test_adaptive_integration.py`) |
+| Outcome classification tests: four classes, technical failure never reported as blocked, inconclusive never reported as success | **Enforced** — record-level vocabulary tested (`tests/test_truthful_metrics.py`) and the product reporting layer keeps classes distinct, rendered only from persisted rows (`tests/test_dashboard_honesty.py`) |
+| No mock/placeholder data presented as real results; unavailable metrics rendered `null`, never `0.0` | **Enforced at data layer** (`tests/test_truthful_metrics.py`) **and in dashboard rendering** (`tests/test_dashboard_honesty.py`, `tests/test_agreed_ui_conformance.py`) |
+| AI analyses must not invent results or reclassify outcomes | **Planned** (no AI analysis implementation exists yet) |
+
 ---
 
 ## 2. Unit Tests
@@ -440,6 +454,70 @@ def test_metrics_empty_episodes():
     assert snapshot.attack_success_rate == 0.0
     assert snapshot.total_episodes == 0
 ```
+
+### 2.x Phase 3 Runner Tests (`tests/test_phase3_runner.py`)
+
+Deterministic tests for the bounded experiment runner (ADR-017), all running
+with the deterministic engine — zero LLM calls, zero network, zero cost:
+
+* selection validity (empty/malformed/unknown/duplicate IDs rejected),
+  per-invocation episode limits, hard cap, and full-matrix refusal;
+* `validate`/`dry-run` execute zero episodes and write nothing;
+* seed policy (`episode_seed = config_seed + episode_index`) and
+  same-seed reproducibility;
+* success, per-episode failure (recorded, redacted, never a silent success),
+  and interruption → resume completing episodes exactly once;
+* checkpoint persistence: atomic writes, corrupt checkpoints, manifest-hash
+  mismatch, missing records for `completed`, duplicate and mid-file
+  corruption, torn trailing writes;
+* aggregation of persisted records only: unavailable metrics stay `null`
+  (never fabricated `0.0`), partial runs stay incomplete, invalid records
+  surface as integrity problems;
+* provider preflight (llm mode fails closed on the gemini binding without
+  leaking credential values);
+* CLI exit codes (0 ok / 1 error / 2 refused execution) and API
+  non-execution (no execution routes; `GET /experiment-dry-run` plans only);
+* Gmail read-only preservation (the runner package never references or
+  imports Gmail modules).
+
+### 2.x Phase 4 Feedback-Guided Search Tests (`tests/test_phase4_feedback.py`)
+
+Deterministic, fully offline tests for feedback-guided candidate selection
+(`ADAPTIVE_SEARCH.md`, ADR-018). A scripted `evaluate_strategy` double pins
+ASR per ladder *and* emits the structured episode trace the store ingests, so
+every assertion is about real control flow rather than simulator luck:
+
+* cross-candidate statistics accumulate across candidate evaluations inside
+  one run (shared steps receive evidence from several candidates);
+* independent runs never share feedback state: a new `run_id`, a changed
+  config fingerprint (including `defense`), or corrupt state all start clean
+  with the reset reason recorded in the store;
+* the §6 regression test — with observed outcomes the iteration-3 ranking
+  promotes a structurally 5th candidate to first and evaluates it first,
+  while a no-success counter-fixture on the same landscape stays exactly
+  structural, proving the path is genuinely outcome-dependent and not a
+  relabelled neighbour loop;
+* feedback ordering differs from greedy ordering, per-iteration work respects
+  `selection_budget`, and a ladder is evaluated at most once per run;
+* identical configuration reproduces identical trajectories and the selection
+  audit (rank, score, evidence) survives persistence;
+* Diagnoser evidence is limited to the validated `AttackOutcome` vocabulary —
+  unknown outcome names, malformed steps and tampered ladder keys raise
+  `FeedbackStoreError` instead of being absorbed;
+* technical failures, incomplete evaluations and missing traces are recorded
+  unusable and contribute zero ranking statistics (no favourable signal);
+* the greedy baseline is byte-for-byte unchanged when the adaptive mode is
+  disabled (same call pattern, same history field set, no feedback store file);
+* the promotion gate still rejects a feedback-selected candidate that fails
+  the utility floor;
+* the A/B comparison (`backend/adaptive_ab.py`) asserts comparable arms,
+  reproducibility across repeated runs, and a persisted results file;
+* defense transfer: the real `VerifierDefense` inverts the marker-defense
+  preference landscape, and no statistics leak across defenses.
+
+HTTP wiring for the same feature lives in `tests/test_adaptive_integration.py`
+(`mode` defaults to greedy through `/adaptive/run`, `mode=feedback` exposes the
+selection rationale in `/adaptive/status`, unknown modes fail with 400).
 
 ---
 
@@ -877,6 +955,33 @@ jobs:
 ---
 
 *This document is the authoritative reference for testing. Update it when testing strategy changes.*
+
+---
+
+## Research dashboard smoke test (manual, ONE bounded run)
+
+The dashboard work is accepted with **one** bounded end-to-end smoke test;
+it is not an invitation to repeat large campaigns. The procedure (run once,
+locally, offline except loopback services):
+
+1. `python -m frontend.server 8000`, open `http://127.0.0.1:8000`.
+2. Connect a target through `/api/connections` and record the real probe
+   result (`local_python` uses `<module>:<entry>` + bounded ping;
+   `http_api` requires a JSON response to one bounded POST).
+3. `POST /api/adaptive/validate` with `provider: "ollama"` — distinguishes
+   *service unreachable*, *model missing* and *ready*.
+4. Start a bounded `feedback` run (small `episodes`, `iterations`,
+   `total_episode_budget`, `model_request_budget`) and record the terminal
+   status from the persisted run record.
+5. While it runs, `POST /api/adaptive/defense_eval` must return **409**
+   (completion barrier); after a `completed` run, replay one saved finding
+   and verify `source_case_id` linkage and the four-state counts.
+6. `GET /api/overview` must show the same numbers the run record shows; a
+   missing value renders as *Unavailable*, never as zero or success.
+
+Record what the environment could not exercise (e.g. no successful case to
+replay, model request not reached because the run converged early) instead of
+substituting a fixture.
 
 ---
 

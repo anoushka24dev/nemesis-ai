@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "active": "gmail",
+  "connections": {
+    "agent_framework": {
+      "model": "llama3.1:8b",
+      "base_url": "http://127.0.0.1:11434",
+      "target_id": "langchain-agent",
+      "timeout_seconds": 30.0,
+      "method": "agent_framework",
+      "connected_at": "2026-11-11T08:29:30Z",
+      "last_validation": {
+        "ok": true,
+        "checked_at": "2026-11-11T08:29:30Z",
+        "error": null,
+        "error_category": null,
+        "status_code": null,
+        "detail": {
+          "elapsed_seconds": 19.762,
+          "output_preview": "{\"name\": \"connection established\", \"parameters\": {\"status\": \"online\"}}"
+        }
+      }
+    },
+    "http_api": {
+      "endpoint_url": "http://127.0.0.1:11643/execute",
+      "target_id": "http-byoa-live",
+      "timeout_seconds": 15.0,
+      "method": "http_api",
+      "connected_at": "2026-11-12T05:08:05Z",
+      "last_validation": {
+        "ok": true,
+        "checked_at": "2026-11-12T05:08:05Z",
+        "error": null,
+        "error_category": null,
+        "status_code": 200,
+        "detail": {
+          "elapsed_seconds": 0.031,
+          "json": true
+        }
+      }
+    },
+    "gmail": {
+      "target_id": "gmail-agent",
+      "max_results": 5,
+      "timeout_seconds": 120.0,
+      "method": "gmail",
+      "connected_at": "2026-11-12T05:08:10Z",
+      "last_validation": {
+        "ok": true,
+        "checked_at": "2026-11-12T05:08:10Z",
+        "error": null,
+        "error_category": null,
+        "status_code": null,
+        "detail": {
+          "checks": {
+            "oauth": true,
+            "read_only_scope": true,
+            "gmail_read": true
+          }
+        }
+      }
+    }
+  }
+}

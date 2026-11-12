@@ -76,6 +76,8 @@ class Controller:
         start_time = time.time()
         stop = StopCondition()
         technical_failures = 0
+        self._episode_logs = []  # fresh per-episode log (populated below)
+        outcome = AttackOutcome.UNKNOWN
 
         self.memory.start_episode(config)
         self.metrics.begin_episode(config)
@@ -110,6 +112,7 @@ class Controller:
                 tool_call=tool_call_request,
                 cost_usd=self.metrics.last_round_cost(),
             )
+            self._episode_logs.append(log_entry)
             self.memory.append_log(config.episode_id, log_entry)
             self.metrics.record_round(log_entry)
 

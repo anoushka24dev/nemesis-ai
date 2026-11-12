@@ -1,9 +1,46 @@
 # Experiment Plan
 
-> **Project:** Adaptive AI Agent Defense Evaluation Framework
-> **Version:** 1.0.0
-> **Last Updated:** 2026-09-16
+> **Project:** Adaptive AI Agent Defense Evaluation Framework (Nemesis)
+> **Version:** 1.1.0
+> **Last Updated:** 2026-10-25
 > **Status:** Active
+
+---
+
+## Scope & product context (read first)
+
+- **What this document is:** the original research design for the five
+  experimental modes below (hypotheses, matrices, stop conditions),
+  preserved as historical decisions.
+- **What is approved to execute today:** the validated **26-configuration /
+  1,300-episode manifest** ([CONTRACTS.md §7](CONTRACTS.md), ADR-016/017 in
+  [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)), run only through
+  the bounded, non-executing-by-default Phase 3 runner
+  ([EXPERIMENT_RUNNER.md](EXPERIMENT_RUNNER.md)). Full-matrix execution is
+  refused pending a separately approved procedure; the PRD's 1,900-episode
+  total is the original design, not current capability.
+- **Episode budget:** **1,000 episodes is a desired supported experiment
+  budget** for the eventual product runner — not a claim that this system
+  has run or can safely run that many today. The eventual runner must
+  enforce hard limits, timeouts, checkpointing, safe resume, and provider
+  cost limits; large runs require explicit user initiation and a successful
+  small smoke test first (PRD §1.10).
+- **Product workflow:** this plan sits inside the eight-step experiment
+  workflow documented in [PRD.md §1.10](PRD.md) (HTTP connectivity check →
+  configuration → bounded adaptive episodes → evidence/artifacts → AI attack
+  analysis → **separate** defense evaluation → defense analysis). Safe
+  initial defaults (PRD §1.11) apply to every run: synthetic data and
+  canaries, no real production credentials, mocked/sandboxed tool actions,
+  no external network by default, bounded budgets, redaction where practical,
+  no automatic side-effecting retries, missing metrics as unavailable, and
+  no mock data presented as real results.
+- **Search algorithms:** both greedy hill climbing and feedback-guided
+  search are selectable strategies ([ADAPTIVE_SEARCH.md](ADAPTIVE_SEARCH.md));
+  this plan does not assume either is superior — that is an open research
+  question answered only by controlled comparison.
+- **Gmail:** the Gmail Security Side Panel is a separate read-only
+  experience ([THREAT_CLASSIFICATION.md](THREAT_CLASSIFICATION.md)); no
+  experiment in this plan touches a real mailbox.
 
 ---
 
@@ -659,7 +696,7 @@ g7h8i9j0k1l2,YES,NO,disagree,"Borderline: payload was subtle, defense allowed"
 - Add SQLite persistence backend
 - Implement async episode execution
 - Add more attack categories
-- Create web dashboard for results
+- Extend the web dashboard (shipped: reference-matched `frontend/` with real target connections, persisted-state metrics, sequential defense replay); remaining: framework connection, AI analysis over persisted evidence
 
 ### 15.2 Medium-Term (3-6 months)
 

@@ -1,0 +1,1 @@
+{"service": "Nemesis HTTP BYOA Target", "endpoint": "/execute", "supported_method": "POST", "message": "Send a JSON POST request to execute a target action.", "health_endpoint": "/health", "error": "Method Not Allowed", "detail": "This endpoint requires POST to execute actions."}

@@ -1,0 +1,19 @@
+{
+  "algorithm": "sha256",
+  "generated_at": "2026-10-26T11:26:02.714949+00:00",
+  "files": {
+    "episodes.csv": {
+      "sha256": "db08cb3b17e16808b040beb22c95a296a7cd6a19cfe6cb992a2c7d2b9c758820",
+      "size_bytes": 569
+    },
+    "episodes.json": {
+      "sha256": "57214681459629798085effe8b20a09e8b768cbfc2842b58531c031d62a8498d",
+      "size_bytes": 912
+    },
+    "config_summary.json": {
+      "sha256": "7a3443c13638c20b099ece435cce30959c44efedac39c3cd5e4668e6b49973d8",
+      "size_bytes": 522
+    }
+  },
+  "episodes_payload_sha256": "d5086d661273a435e78c37fce607f0be7c4ee023ebcdd645b951877d7e8d44b7"
+}

@@ -51,10 +51,12 @@ class BaseDefense:
 
 
 class CamelDefense(BaseDefense):
-    """CaMeL defense — control/data flow separation + taint tracking.
+    """CaMeL-STYLE local PROXY — heuristic taint tracking + sensitive tools.
 
-    Separates the control flow (what the agent decides to do) from
-    data flow (what data flows into tools). Tracks taint propagation.
+    A simplified stand-in that borrows CaMeL's control/data-flow idea: it keeps
+    a small tainted-value set and denies sensitive tool calls whose arguments
+    look tainted. It is NOT the published CaMeL implementation (no upstream
+    code, no privileged-LLM planner, no interpreter).
     """
 
     defense_type = DefenseType.CAMEL
@@ -136,10 +138,12 @@ class CamelDefense(BaseDefense):
 
 
 class ProgentDefense(BaseDefense):
-    """Progent defense — privilege control via SMT solver + least privilege.
+    """Progent-STYLE privilege-control PROXY (no SMT solver).
 
-    Uses a formal model of what the agent is allowed to do and checks
-    each tool call against the minimum required privileges.
+    A static privilege table plus literal argument checks. This is a
+    simplified local proxy that borrows Progent's least-privilege idea; it is
+    NOT the published Progent system and it performs no formal/constraint
+    solving (no solver dependency exists in this repository).
     """
 
     defense_type = DefenseType.PROGENT
@@ -180,7 +184,7 @@ class ProgentDefense(BaseDefense):
                 source=self.defense_type,
             )
 
-        # SMT-style check: verify argument constraints
+        # Literal argument checks (string/pattern rules, not constraint solving)
         violations = self._check_argument_constraints(tool_call)
         if violations:
             return DefenseEvent(
@@ -212,10 +216,11 @@ class ProgentDefense(BaseDefense):
 
 
 class VerifierDefense(BaseDefense):
-    """Custom Verifier — rule-based schema check + intent matching.
+    """Intent-verifier-STYLE local PROXY — schema + keyword rules.
 
-    Validates tool calls against expected schemas and checks if the
-    agent's intent matches the original task description.
+    Validates tool calls against hard-coded schemas and keyword intent rules.
+    It is a rule-based proxy, not the published Verifier system and not a
+    model-based intent judge.
     """
 
     defense_type = DefenseType.VERIFIER

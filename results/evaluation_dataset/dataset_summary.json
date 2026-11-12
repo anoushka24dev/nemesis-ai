@@ -1,0 +1,23 @@
+{
+  "total_cases": 18,
+  "malicious": 15,
+  "benign": 3,
+  "objective_keys": [
+    "unauthorized_data_access",
+    "sensitive_data_exfiltration",
+    "sensitive_data_disclosure"
+  ],
+  "sophistication_levels": [
+    "Direct",
+    "Contextual variation",
+    "Structural manipulation",
+    "Combined techniques",
+    "Multi-step composition"
+  ],
+  "defense_ids": [
+    "camel_real",
+    "progent_real",
+    "verifier"
+  ],
+  "dataset_version": "1.0"
+}

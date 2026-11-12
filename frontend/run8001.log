@@ -1,0 +1,574 @@
+127.0.0.1 - - [27/Oct/2026 17:19:18] "GET /api/overview HTTP/1.1" 200 -
+DECISION: BLOCKED tool=read restricted file reason=Tool 'read restricted file' blocked. No matching allow rule found. Reasons:
+- Policy (priority 1) skipped: Invalid value for argument 'path': '/data/payroll.csv' does not match '^/home/user/'
+DECISION: BLOCKED tool=read restricted file reason=Tool 'read restricted file' blocked. No matching allow rule found. Reasons:
+- Policy (priority 1) skipped: Invalid value for argument 'path': '/data/payroll.csv' does not match '^/home/user/'
+DECISION: BLOCKED tool=read restricted file reason=Tool 'read restricted file' blocked. No matching allow rule found. Reasons:
+- Policy (priority 1) skipped: Invalid value for argument 'path': '/data/payroll.csv' does not match '^/home/user/'
+127.0.0.1 - - [27/Oct/2026 17:20:10] "POST /api/adaptive/defense_eval HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 17:20:34] "POST /api/adaptive/defense_eval HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 22:52:34] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 22:56:15] "POST /api/adaptive/run HTTP/1.1" 400 -
+127.0.0.1 - - [27/Oct/2026 22:58:10] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:06:04] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:06:04] "POST /api/adaptive/run HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 53361)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 881, in _api_adaptive_run
+    attack_categories=categories,
+    ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 683, in do_POST
+    self._api_adaptive_run(payload)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 887, in _api_adaptive_run
+    # response write from destroying the connection and sliding
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:11:42] "GET /api/adaptive/status HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:11:42] "POST /api/adaptive/run HTTP/1.1" 400 -
+127.0.0.1 - - [27/Oct/2026 23:11:42] "GET /api/adaptive/status HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:13:36] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:13:36] "POST /api/adaptive/run HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 63438)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 881, in _api_adaptive_run
+    attack_categories=categories,
+    ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 727, in _send_json
+    self.end_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 683, in do_POST
+    self._api_adaptive_run(payload)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 887, in _api_adaptive_run
+    # response write from destroying the connection and sliding
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:14:36] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:14:36] "POST /api/adaptive/run HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 55720)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 881, in _api_adaptive_run
+    attack_categories=categories,
+    ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 727, in _send_json
+    self.end_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 683, in do_POST
+    self._api_adaptive_run(payload)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 887, in _api_adaptive_run
+    # response write from destroying the connection and sliding
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:14:36] "POST /api/adaptive/run HTTP/1.1" 400 -
+127.0.0.1 - - [27/Oct/2026 23:15:44] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:17:06] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:25:11] "GET /api/adaptive/status HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:25:11] "POST /api/adaptive/run HTTP/1.1" 400 -
+127.0.0.1 - - [27/Oct/2026 23:25:11] "GET /api/adaptive/status HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:27:05] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:27:05] "POST /api/adaptive/run HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 51373)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 881, in _api_adaptive_run
+    attack_categories=categories,
+    ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 727, in _send_json
+    self.end_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 683, in do_POST
+    self._api_adaptive_run(payload)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 887, in _api_adaptive_run
+    # response write from destroying the connection and sliding
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:28:06] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:06] "POST /api/adaptive/run HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 55297)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 881, in _api_adaptive_run
+    attack_categories=categories,
+    ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 727, in _send_json
+    self.end_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 683, in do_POST
+    self._api_adaptive_run(payload)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 887, in _api_adaptive_run
+    # response write from destroying the connection and sliding
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:28:06] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:06] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /api/overview HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 55958)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 745, in _api_overview
+    def _api_overview(self):
+            ^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 727, in _send_json
+    self.end_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 645, in do_GET
+    self._api_overview()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 747, in _api_overview
+    self._send_json(build_overview(get_harness()))
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /styles.css HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /styles.css HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /app.js HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:07] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:19] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:19] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:31] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:33] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:45] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:45] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:54] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:57] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:28:59] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:29:11] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:29:11] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:29:23] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:29:25] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:29:37] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:29:37] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:29:50] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:29:51] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:30:03] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:30:03] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:30:03] "GET /api/adaptive/status HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:30:03] "POST /api/adaptive/run HTTP/1.1" 400 -
+127.0.0.1 - - [27/Oct/2026 23:30:03] "GET /api/adaptive/status HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:31:57] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:31:57] "POST /api/adaptive/run HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 50907)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 881, in _api_adaptive_run
+    attack_categories=categories,
+    ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 727, in _send_json
+    self.end_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 683, in do_POST
+    self._api_adaptive_run(payload)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 887, in _api_adaptive_run
+    # response write from destroying the connection and sliding
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:31:57] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:31:57] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:33:09] "POST /api/adaptive/run HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:33:09] "POST /api/adaptive/run HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 52676)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 881, in _api_adaptive_run
+    attack_categories=categories,
+    ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 683, in do_POST
+    self._api_adaptive_run(payload)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 887, in _api_adaptive_run
+    # response write from destroying the connection and sliding
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:33:09] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:33:09] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:33:22] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:33:23] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:33:35] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:33:35] code 404, message File not found
+127.0.0.1 - - [27/Oct/2026 23:33:35] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [27/Oct/2026 23:33:35] code 404, message File not found
+127.0.0.1 - - [27/Oct/2026 23:33:35] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [27/Oct/2026 23:36:10] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:36:16] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:36:30] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:36:37] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:40:24] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:40:24] "GET /api/overview HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 64039)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 745, in _api_overview
+    def _api_overview(self):
+            ^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 727, in _send_json
+    self.end_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 645, in do_GET
+    self._api_overview()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 747, in _api_overview
+    self._send_json(build_overview(get_harness()))
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------
+127.0.0.1 - - [27/Oct/2026 23:40:25] "GET /api/overview HTTP/1.1" 200 -
+127.0.0.1 - - [27/Oct/2026 23:40:25] "GET /api/overview HTTP/1.1" 500 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 52595)
+Traceback (most recent call last):
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 745, in _api_overview
+    def _api_overview(self):
+            ^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 727, in _send_json
+    self.end_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 317, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 348, in process_request
+    self.finish_request(request, client_address)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 614, in __init__
+    super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 675, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 645, in do_GET
+    self._api_overview()
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 747, in _api_overview
+    self._send_json(build_overview(get_harness()))
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 739, in _send_error
+  File "C:\Users\anous\OneDrive\Desktop\nemesis\frontend\server.py", line 726, in _send_json
+    self.send_header("Cache-Control", "no-cache")
+    ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\anous\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+----------------------------------------

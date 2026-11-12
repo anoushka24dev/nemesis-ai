@@ -39,9 +39,10 @@ class DefenseAdapter:
 
         if denied_count > allowed_count:
             # Majority says denied — return highest-confidence denial
+            # (confidence may be None = not calculated; treated as lowest.)
             best = max(
                 (e for e in raw_events if e.decision == DefenseDecision.DENIED),
-                key=lambda e: e.confidence,
+                key=lambda e: (e.confidence if e.confidence is not None else -1.0),
             )
             sources = [e.source.value for e in raw_events if e.decision == DefenseDecision.DENIED]
             best.evidence = f"Majority denied ({sources}): {best.evidence}"
@@ -50,12 +51,15 @@ class DefenseAdapter:
             # Majority says allowed — return highest-confidence allow
             best = max(
                 (e for e in raw_events if e.decision == DefenseDecision.ALLOWED),
-                key=lambda e: e.confidence,
+                key=lambda e: (e.confidence if e.confidence is not None else -1.0),
             )
             return best
         else:
             # Tie — default to denied (safer)
-            best = max(raw_events, key=lambda e: e.confidence)
+            best = max(
+                raw_events,
+                key=lambda e: (e.confidence if e.confidence is not None else -1.0),
+            )
             best.decision = DefenseDecision.DENIED
             best.evidence = f"Tie-breaking to DENIED: {best.evidence}"
             return best

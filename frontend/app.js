@@ -1,679 +1,2063 @@
-/* ===== Nemesis — Mode 2 / Config C1 · Dashboard Redesign ===== */
-/* Command center, live timeline, semantic colors, copy button */
+/* ===== Nemesis dashboard — real backend data only ===== */
 
-const API = {
-  run:      "/api/run_c1",
-  csv:      "/api/episodes_csv",
-  jsonl:    "/api/episodes_jsonl",
-  summary:  "/api/config_summary",
-  docs:     "/api/doc",
-  adrs:     "/api/adr_index",
-  adr:      "/api/adr",
+const state = {
+  overview: null,
+  page: "experiments",
+  pollTimer: null,
+  starting: false,
 };
 
-/* ---------------- Tab switching ---------------- */
+const $ = (id) => document.getElementById(id);
 
-const tabNav = document.getElementById("tabNav");
-const panels = {
-  demo:    document.getElementById("panel-demo"),
-  results: document.getElementById("panel-results"),
-  docs:    document.getElementById("panel-docs"),
-  adr:     document.getElementById("panel-adr"),
-};
-
-tabNav.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-tab]");
-  if (!btn) return;
-  setActiveTab(btn.dataset.tab);
-});
-
-function setActiveTab(name) {
-  tabNav.querySelectorAll(".tab").forEach((t) =>
-    t.classList.toggle("active", t.dataset.tab === name)
-  );
-  Object.entries(panels).forEach(([k, el]) =>
-    el.classList.toggle("hidden", k !== name)
-  );
-  if (name === "results") refreshResults();
-}
-
-/* ---------------- Demo Runner — command center ---------------- */
-
-const runBtn     = document.getElementById("runBtn");
-const runLog     = document.getElementById("runLog");
-const returnDict = document.getElementById("returnDict");
-const copyBtn    = document.getElementById("copyBtn");
-
-// Status
-const statusDot    = document.getElementById("statusDot");
-const statusLabel  = document.getElementById("statusLabel");
-const statusSub    = document.getElementById("statusSub");
-const execBar      = document.getElementById("execBar");
-const execFill     = document.getElementById("execFill");
-const execLabel    = document.getElementById("execLabel");
-const execPct      = document.getElementById("execPct");
-const timelineCard = document.getElementById("timelineCard");
-const timeline     = document.getElementById("timeline");
-const timelineCount= document.getElementById("timelineCount");
-const summaryRow   = document.getElementById("summaryRow");
-const sumBlocked   = document.getElementById("sumBlocked");
-const sumPartial   = document.getElementById("sumPartial");
-const sumBypassed  = document.getElementById("sumBypassed");
-const jsonCard     = document.getElementById("jsonCard");
-const runtimeChip  = document.getElementById("runtimeChip");
-const runtimeValue = document.getElementById("runtimeValue");
-const btnSpinner   = document.getElementById("btnSpinner");
-const mcEpisodes   = document.getElementById("mcEpisodes");
-const mcRounds     = document.getElementById("mcRounds");
-
-let runStartTime = 0;
-let runtimeInterval = null;
-
-function setStatus(state, sub) {
-  statusDot.className = "status-dot " + state;
-  const labels = {
-    idle:    ["Ready", "Awaiting execution"],
-    running: ["Running", sub || "Executing episodes…"],
-    done:    ["Last run OK", "Artifacts written"],
-    error:   ["Last run failed", sub || "Check the log"],
-  };
-  const [label, subtext] = labels[state] || [state, ""];
-  statusLabel.textContent = label;
-  statusSub.textContent = subtext;
-}
-
-function showExecBar() {
-  execBar.style.display = "";
-  execFill.style.width = "0%";
-  execPct.textContent = "0%";
-}
-
-function setExecProgress(pct, label) {
-  execFill.style.width = pct + "%";
-  execPct.textContent = pct + "%";
-  execLabel.textContent = label || "";
-}
-
-function hideExecBar() {
-  execBar.style.display = "none";
-}
-
-function addTimelineEvent(text, type) {
-  if (!timelineCard.style.display || timelineCard.style.display === "none") {
-    timelineCard.style.display = "";
-  }
-  const item = document.createElement("div");
-  item.className = "timeline-item";
-  item.innerHTML = `
-    <span class="timeline-dot ${type || "info"}"></span>
-    <span class="timeline-text">${text}</span>`;
-  timeline.appendChild(item);
-  timeline.scrollTop = timeline.scrollHeight;
-  timelineCount.textContent = timeline.children.length + " events";
-}
-
-function resetTimeline() {
-  timeline.innerHTML = "";
-  timelineCount.textContent = "0 events";
-  timelineCard.style.display = "none";
-}
-
-function showSummary(episodes) {
-  summaryRow.style.display = "";
-  let blocked = 0, partial = 0, bypassed = 0;
-  for (const ep of episodes) {
-    if (ep.outcome === "blocked" || ep.outcome === "ignored") blocked++;
-    else if (ep.outcome === "success" && ep.bypass_triggered) bypassed++;
-    else if (ep.outcome === "success") partial++;
-  }
-  sumBlocked.textContent  = blocked;
-  sumPartial.textContent  = partial;
-  sumBypassed.textContent = bypassed;
-}
-
-function hideSummary() {
-  summaryRow.style.display = "none";
-}
-
-function showJSON(data) {
-  jsonCard.style.display = "";
-  returnDict.textContent = JSON.stringify(data, null, 2);
-}
-
-function hideJSON() {
-  jsonCard.style.display = "none";
-  returnDict.textContent = "—";
-}
-
-function startRuntimeCounter() {
-  runStartTime = Date.now();
-  runtimeChip.style.display = "";
-  runtimeValue.textContent = "0.0s";
-  if (runtimeInterval) clearInterval(runtimeInterval);
-  runtimeInterval = setInterval(() => {
-    const s = (Date.now() - runStartTime) / 1000;
-    runtimeValue.textContent = s.toFixed(1) + "s";
-  }, 100);
-}
-
-function stopRuntimeCounter() {
-  if (runtimeInterval) {
-    clearInterval(runtimeInterval);
-    runtimeInterval = null;
-  }
-}
-
-function setBtnRunning(running) {
-  if (running) {
-    runBtn.disabled = true;
-    btnSpinner.style.display = "";
-    runBtn.querySelector(".btn-text").textContent = "Running…";
-  } else {
-    runBtn.disabled = false;
-    btnSpinner.style.display = "none";
-    runBtn.querySelector(".btn-text").textContent = "Run Adaptive Evaluation";
-  }
-}
-
-function resetRunnerUI() {
-  setStatus("idle");
-  hideExecBar();
-  resetTimeline();
-  hideSummary();
-  hideJSON();
-  runtimeChip.style.display = "none";
-  setBtnRunning(false);
-  runLog.textContent = "";
-  mcEpisodes.textContent = "2";
-  mcRounds.textContent = "2";
-}
-
-/* ---------------- Run action ---------------- */
-
-runBtn.addEventListener("click", async () => {
-  resetRunnerUI();
-  setStatus("running", "Wiping prior artifacts…");
-  showExecBar();
-  setExecProgress(5, "Wiping prior artifacts…");
-  setBtnRunning(true);
-  startRuntimeCounter();
-
-  try {
-    addTimelineEvent("Execution started — Config <strong>C1</strong>", "info");
-    addTimelineEvent("Wiping prior artifacts (episodes.csv, episodes.json, config_summary.json)…", "info");
-    setExecProgress(10, "Wiping prior artifacts…");
-    await sleep(300);
-
-    const res = await fetch(API.run, { method: "POST" });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`server returned ${res.status}: ${text}`);
-    }
-
-    setExecProgress(25, "Running Episode 1…");
-    addTimelineEvent("Episode 1 initialized — loading agent environment", "info");
-    await sleep(400);
-
-    setExecProgress(40, "Episode 1 · Round 1");
-    addTimelineEvent("Episode 1 · Round 1 — attacker generating payload", "info");
-    await sleep(400);
-
-    setExecProgress(50, "Episode 1 · Defense evaluation");
-    addTimelineEvent("Episode 1 · Round 1 — CaMeL inspecting tool permissions", "warn");
-    await sleep(400);
-
-    setExecProgress(60, "Episode 1 complete");
-    addTimelineEvent("Episode 1 · Round 1 — defense evaluation complete", "info");
-    await sleep(300);
-
-    setExecProgress(68, "Episode 1 · Round 2 (adaptation)");
-    addTimelineEvent("Episode 1 · Round 2 — attacker adapting to prior defense", "warn");
-    await sleep(400);
-
-    setExecProgress(78, "Episode 2 initialized");
-    addTimelineEvent("Episode 1 complete", "success");
-    addTimelineEvent("Episode 2 initialized — loading agent environment", "info");
-    await sleep(400);
-
-    setExecProgress(85, "Episode 2 · Round 1");
-    addTimelineEvent("Episode 2 · Round 1 — attacker generating payload", "info");
-    await sleep(400);
-
-    setExecProgress(92, "Episode 2 · Defense evaluation");
-    addTimelineEvent("Episode 2 · Round 1 — CaMeL inspecting tool permissions", "warn");
-    await sleep(300);
-
-    setExecProgress(98, "Finalizing…");
-    addTimelineEvent("Episode 2 · Round 1 — defense evaluation complete", "info");
-    await sleep(200);
-
-    const data = await res.json();
-    setExecProgress(100, "Complete");
-    addTimelineEvent("Run complete — artifacts written", "success");
-
-    runLog.textContent += "Fresh artifacts written.\n";
-    runLog.textContent += "Demo complete — 2 episodes × 2 rounds.\n";
-    showJSON(data);
-    setStatus("done", "2 episodes · 2 rounds");
-    showSummary([{ outcome: "success", bypass_triggered: false }]);
-    setBtnRunning(false);
-    refreshResults();
-  } catch (err) {
-    runLog.textContent += `ERROR: ${err.message}\n`;
-    addTimelineEvent(`Error: ${err.message}`, "fail");
-    setStatus("error", err.message);
-    setBtnRunning(false);
-  } finally {
-    hideExecBar();
-    stopRuntimeCounter();
-  }
-});
-
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-/* ---------------- Results Dashboard ---------------- */
-
-const refreshBtn = document.getElementById("refreshResultsBtn");
-refreshBtn.addEventListener("click", refreshResults);
-
-let currentView = "table";
-document.querySelectorAll(".view-toggle .toggle-btn").forEach((b) => {
-  b.addEventListener("click", () => {
-    currentView = b.dataset.view;
-    document.querySelectorAll(".view-toggle .toggle-btn").forEach((x) =>
-      x.classList.toggle("active", x === b)
-    );
-    document.getElementById("tableView").classList.toggle("hidden", currentView !== "table");
-    document.getElementById("chartView").classList.toggle("hidden", currentView !== "chart");
-    if (currentView === "chart") drawChart();
-  });
-});
-
-function refreshResults() {
-  refreshTable();
-  refreshAgg();
-  if (currentView === "chart") drawChart();
-}
-
-/* ---------- Table view ---------- */
-
-async function refreshTable() {
-  const tbody = document.getElementById("resultsBody");
-  tbody.innerHTML = "";
-
-  let csvText;
-  try {
-    const r = await fetch(API.csv);
-    if (!r.ok) throw new Error("csv fetch failed");
-    csvText = await r.text();
-  } catch {
-    tbody.innerHTML =
-      `<tr><td colspan="8" class="empty">Cannot read episodes.csv — run the demo first.</td></tr>`;
-    return;
-  }
-
-  const lines = csvText.trim().split(/\r?\n/);
-  if (lines.length < 2) {
-    tbody.innerHTML =
-      `<tr><td colspan="8" class="empty">No episode rows in episodes.csv.</td></tr>`;
-    return;
-  }
-
-  const headers = parseCSVLine(lines[0]);
-  for (let i = 1; i < lines.length; i++) {
-    const vals = parseCSVLine(lines[i]);
-    if (vals.length < headers.length) continue;
-    const row = Object.fromEntries(headers.map((h, idx) => [h, vals[idx]]));
-    if (!row.episode_id) continue;
-
-    const ASR = row.outcome === "success" ? 1.0 : 0.0;
-    const blastRadius = row.agents_compromised != null
-      ? String(row.agents_compromised)
-      : "—";
-
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><code>${esc(row.episode_id)}</code></td>
-      <td><span class="badge ${row.outcome}">${esc(row.outcome)}</span></td>
-      <td>${esc(row.rounds_used)}</td>
-      <td>${ASR.toFixed(1)}</td>
-      <td>${row.utility_score != null ? String(row.utility_score) : "—"}</td>
-      <td>${boolCell(row.propagation_happened)}</td>
-      <td>${esc(blastRadius)}</td>
-      <td class="mono-sm">${esc(row.checksum ? row.checksum.slice(0, 12) + "…" : "—")}</td>
-    `;
-    tbody.appendChild(tr);
-  }
-}
-
-/* ---------- Aggregated metrics ---------- */
-
-async function refreshAgg() {
-  let summary;
-  try {
-    const r = await fetch(API.summary);
-    if (!r.ok) throw new Error("summary fetch failed");
-    summary = await r.json();
-  } catch {
-    summary = null;
-  }
-
-  const m = (summary && summary.metrics) ? summary.metrics : null;
-  const targets = ["aggEpisodes", "aggAsr", "aggUtility", "aggProp", "aggBlast", "aggRounds"];
-  targets.forEach((id) => document.getElementById(id).textContent = "—");
-
-  if (!m) return;
-
-  const e = document.getElementById("aggEpisodes");
-  const a = document.getElementById("aggAsr");
-  const u = document.getElementById("aggUtility");
-  const p = document.getElementById("aggProp");
-  const b = document.getElementById("aggBlast");
-  const r = document.getElementById("aggRounds");
-
-  e.textContent = summary.episodes ?? "—";
-  e.nextElementSibling.className = "agg-value";
-
-  a.textContent = fmt(m.asr);
-  a.className = "agg-value success";
-
-  u.textContent = fmt(m.utility_score);
-  u.className = "agg-value";
-
-  p.textContent = fmt(m.propagation_rate);
-  p.className = "agg-value warning";
-
-  b.textContent = fmt(m.blast_radius);
-  b.className = "agg-value agent";
-
-  r.textContent = fmt(m.rounds_to_success);
-  r.className = "agg-value";
-}
-
-/* ---------- Chart view ---------- */
-
-async function drawChart() {
-  const canvas = document.getElementById("asrChart");
-  const ctx = canvas.getContext("2d");
-  const W = canvas.width, H = canvas.height;
-  ctx.clearRect(0, 0, W, H);
-
-  ctx.fillStyle = "#0a0f1a";
-  ctx.fillRect(0, 0, W, H);
-
-  let episodes = [];
-  try {
-    const r = await fetch(API.jsonl);
-    if (!r.ok) throw new Error("jsonl fetch failed");
-    const text = await r.text();
-    for (const line of text.trim().split(/\n/)) {
-      if (line.trim()) episodes.push(JSON.parse(line));
-    }
-  } catch { episodes = []; }
-
-  if (episodes.length === 0) {
-    ctx.fillStyle = "#64748B";
-    ctx.font = "14px ui-monospace, monospace";
-    ctx.textAlign = "center";
-    ctx.fillText("No episode data — run the demo first", W / 2, H / 2);
-    return;
-  }
-
-  const pad = { top: 34, right: 28, bottom: 52, left: 52 };
-  const plotW = W - pad.left - pad.right;
-  const plotH = H - pad.top - pad.bottom;
-
-  ctx.strokeStyle = "#334155";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(pad.left, pad.top);
-  ctx.lineTo(pad.left, H - pad.bottom);
-  ctx.lineTo(W - pad.right, H - pad.bottom);
-  ctx.stroke();
-
-  ctx.fillStyle = "#94A3B8";
-  ctx.font = "11px ui-monospace, monospace";
-  ctx.textAlign = "right";
-  for (const y of [0, 0.25, 0.5, 0.75, 1]) {
-    const yy = H - pad.bottom - y * plotH;
-    ctx.fillText(y.toFixed(2), pad.left - 7, yy + 4);
-    ctx.strokeStyle = "#1E293B";
-    ctx.beginPath();
-    ctx.moveTo(pad.left, yy);
-    ctx.lineTo(W - pad.right, yy);
-    ctx.stroke();
-  }
-
-  ctx.save();
-  ctx.translate(14, pad.top + plotH / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillStyle = "#CBD5E1";
-  ctx.font = "11px ui-monospace, monospace";
-  ctx.textAlign = "center";
-  ctx.fillText("rate (0 → 1)", 0, 0);
-  ctx.restore();
-
-  ctx.textAlign = "center";
-  ctx.fillStyle = "#94A3B8";
-  ctx.font = "11px ui-monospace, monospace";
-  const step = Math.max(1, Math.floor(episodes.length / 10));
-  episodes.forEach((ep, i) => {
-    if (i % step !== 0 && i !== episodes.length - 1) return;
-    const x = pad.left + (plotW / Math.max(episodes.length - 1, 1)) * i;
-    ctx.fillText(ep.episode_id.slice(0, 8), x, H - pad.bottom + 16);
-  });
-  ctx.fillStyle = "#CBD5E1";
-  ctx.fillText("episode (idx)", pad.left + plotW / 2, H - 4);
-
-  const barW = Math.max(10, plotW / episodes.length * 0.34);
-  const gap  = plotW / Math.max(episodes.length - 1, 1);
-
-  episodes.forEach((ep, i) => {
-    const x = pad.left + gap * i;
-    const asrVal = ep.outcome === "success" ? 1.0 : 0.0;
-    const propVal = ep.propagation_happened ? 1.0 : 0.0;
-
-    const asrY = H - pad.bottom - asrVal * plotH;
-    const propY = H - pad.bottom - propVal * plotH;
-
-    ctx.fillStyle = "#22C55E";
-    ctx.shadowColor = "rgba(34, 197, 94, 0.3)";
-    ctx.shadowBlur = 8;
-    ctx.fillRect(x - barW - 2, asrY, barW, H - pad.bottom - asrY);
-    ctx.shadowBlur = 0;
-
-    if (propVal > 0) {
-      ctx.fillStyle = "#8B5CF6";
-      ctx.shadowColor = "rgba(139, 92, 246, 0.4)";
-      ctx.shadowBlur = 10;
-      ctx.fillRect(x + 2, propY, barW, H - pad.bottom - propY);
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = "#22C55E";
-      ctx.beginPath();
-      ctx.arc(x + barW / 2 + 2, propY, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  });
-
-  ctx.font = "11px ui-monospace, monospace";
-  ctx.textAlign = "left";
-  ctx.fillStyle = "#22C55E";
-  ctx.shadowColor = "rgba(34, 197, 94, 0.35)";
-  ctx.shadowBlur = 6;
-  ctx.fillRect(W - pad.right - 150, 12, 12, 12);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#CBD5E1";
-  ctx.fillText("ASR (outcome-based)", W - pad.right - 132, 22);
-
-  ctx.fillStyle = "#8B5CF6";
-  ctx.shadowColor = "rgba(139, 92, 246, 0.4)";
-  ctx.shadowBlur = 6;
-  ctx.fillRect(W - pad.right - 150, 28, 12, 12);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#CBD5E1";
-  ctx.fillText("Propagation occurred", W - pad.right - 132, 38);
-
-  const summary = await loadSummaryMaybe();
-  if (summary && summary.metrics) {
-    const m = summary.metrics;
-    ctx.font = "12px ui-monospace, monospace";
-    ctx.textAlign = "left";
-    ctx.fillStyle = "#22C55E";
-    ctx.fillText(`agg ASR: ${fmt(m.asr)}`, pad.left + 4, pad.top - 6);
-    ctx.fillStyle = "#8B5CF6";
-    ctx.fillText(`agg prop: ${fmt(m.propagation_rate)}`, pad.left + 4, pad.top + 12);
-  }
-}
-
-async function loadSummaryMaybe() {
-  try {
-    const r = await fetch(API.summary);
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
-}
-
-/* ---------------- Docs Viewer ---------------- */
-
-const docTabs = document.querySelectorAll(".doc-tab");
-docTabs.forEach((b) =>
-  b.addEventListener("click", () => {
-    docTabs.forEach((x) => x.classList.toggle("active", x === b));
-    loadDoc(b.dataset.doc);
-  })
-);
-
-async function loadDoc(name) {
-  const el = document.getElementById("docContent");
-  el.innerHTML = `<p class="muted">Loading <code>${esc(name)}</code>…</p>`;
-  try {
-    const r = await fetch(API.docs, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    if (!r.ok) throw new Error("doc fetch failed");
-    const { html } = await r.json();
-    el.innerHTML = html;
-  } catch (err) {
-    el.innerHTML = `<p class="error">Could not load document: ${esc(err.message)}</p>`;
-  }
-}
-
-/* ---------------- ADR Viewer ---------------- */
-
-const adrIndex = document.getElementById("adrIndex");
-const adrBody  = document.getElementById("adrBody");
-
-async function loadADRIndex() {
-  try {
-    const r = await fetch(API.adrs);
-    if (!r.ok) throw new Error("adr index fetch failed");
-    const list = await r.json();
-    adrIndex.innerHTML = "";
-    for (const adr of list) {
-      const li = document.createElement("li");
-      li.innerHTML = `<button class="adr-item" data-adr="${esc(adr.id)}">${esc(adr.id)} — ${esc(adr.title)}</button>`;
-      adrIndex.appendChild(li);
-    }
-    adrIndex.querySelectorAll(".adr-item").forEach((btn) => {
-      btn.addEventListener("click", () => loadADR(btn.dataset.adr));
-    });
-  } catch {
-    adrIndex.innerHTML = `<li class="error-state">Could not load ADR index.</li>`;
-  }
-}
-
-async function loadADR(id) {
-  try {
-    const r = await fetch(API.adr, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    if (!r.ok) throw new Error("adr fetch failed");
-    const { html, title } = await r.json();
-    document.getElementById("adrTitle").textContent = title;
-    document.getElementById("adrContent").innerHTML = html;
-    adrBody.classList.remove("hidden");
-  } catch {
-    document.getElementById("adrContent").innerHTML =
-      `<p class="error">Could not load ADR ${esc(id)}.</p>`;
-  }
-}
-
-document.getElementById("adrBackBtn").addEventListener("click", () => {
-  adrBody.classList.add("hidden");
-});
-
-/* ---------------- Copy button ---------------- */
-
-copyBtn.addEventListener("click", async () => {
-  const text = returnDict.textContent;
-  if (!text || text === "—") return;
-  try {
-    await navigator.clipboard.writeText(text);
-    copyBtn.classList.add("copied");
-    copyBtn.querySelector(".btn-text").textContent = "Copied!";
-    setTimeout(() => {
-      copyBtn.classList.remove("copied");
-      copyBtn.querySelector(".btn-text").textContent = "Copy";
-    }, 1800);
-  } catch {
-    const range = document.createRange();
-    range.selectNodeContents(returnDict);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-  }
-});
-
-/* ---------------- Helpers ---------------- */
-
-function parseCSVLine(line) {
-  const out = [];
-  let cur = "";
-  let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQ) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') { cur += '"'; i++; }
-        else { inQ = false; }
-      } else cur += ch;
-    } else {
-      if (ch === '"') inQ = true;
-      else if (ch === ',') { out.push(cur); cur = ""; }
-      else cur += ch;
-    }
-  }
-  out.push(cur);
-  return out;
-}
-
-function esc(s) {
-  return String(s == null ? "" : s)
+function esc(value) {
+  return String(value == null ? "" : value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
 
-function boolCell(v) {
-  if (v === "true" || v === true)
-    return `<span class="badge prop-true">true</span>`;
-  if (v === "false" || v === false)
-    return `<span class="badge prop-false">false</span>`;
-  return esc(v);
+function na(value, fallback = "—") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return value;
 }
 
-function fmt(n) {
-  if (n == null) return "—";
-  if (typeof n === "number") return n.toFixed(3);
-  return String(n);
+function parseTs(iso) {
+  if (!iso) return NaN;
+  // Persisted timestamps are ISO-8601 and may carry an explicit +00:00 offset
+  // or no zone at all. Try the value as-is first, then assume UTC.
+  let t = Date.parse(iso);
+  if (Number.isNaN(t)) t = Date.parse(`${iso}Z`);
+  return t;
 }
 
-/* ---------------- Initial state ---------------- */
+function timeAgo(iso) {
+  if (!iso) return "";
+  const t = parseTs(iso);
+  if (Number.isNaN(t)) return "";
+  const secs = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
 
-setActiveTab("demo");
-loadADRIndex();
+function clockTime(iso) {
+  if (!iso) return "—";
+  const t = parseTs(iso);
+  if (Number.isNaN(t)) return "—";
+  return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function toast(message, bad = false) {
+  const el = $("toast");
+  el.textContent = message;
+  el.className = "toast" + (bad ? " bad" : "");
+  el.hidden = false;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.hidden = true; }, 5000);
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) {
+    const reason = (data && (data.error || data.detail)) || `HTTP ${res.status}`;
+    const err = new Error(reason);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+/* ---------------- navigation ---------------- */
+
+function setPage(page) {
+  state.page = page;
+  document.querySelectorAll(".page").forEach((el) => {
+    el.hidden = el.id !== `page-${page}`;
+  });
+  document.querySelectorAll("[data-page]").forEach((el) => {
+    const target = el.dataset.page;
+    if (!target) return;
+    if (el.classList.contains("nav-item")) {
+      el.classList.toggle("active", target === page);
+    }
+  });
+  if (page === "experiments") {
+    requestAnimationFrame(drawChart);
+  }
+  if (page === "defenses") {
+    loadDefenseCampaigns();
+    restoreDefenseJob();
+  }
+  if (page === "gmail") {
+    loadGmailStatus();
+  }
+  if (page === "agents") {
+    loadGmailStatus();
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const nav = event.target.closest("[data-page]");
+  if (nav && nav.dataset.page) {
+    setPage(nav.dataset.page);
+  }
+});
+
+/* ---------------- overview polling ---------------- */
+
+async function loadOverview({ quiet = false } = {}) {
+  try {
+    const data = await api("/api/overview");
+    state.overview = data;
+    renderAll();
+    schedulePoll();
+  } catch (err) {
+    if (!quiet) toast(`Dashboard state unavailable: ${err.message}`, true);
+    $("phaseText").textContent = "Backend unreachable";
+  }
+}
+
+function schedulePoll() {
+  clearTimeout(state.pollTimer);
+  const o = state.overview;
+  const active = o && (o.lifecycle?.running || ["attacker", "paused", "stopping"].includes(o.lifecycle?.phase));
+  state.pollTimer = setTimeout(() => loadOverview({ quiet: true }), active ? 2000 : 12000);
+}
+
+/* ---------------- render: all ---------------- */
+
+function renderAll() {
+  const o = state.overview;
+  if (!o) return;
+  renderTopbar(o);
+  renderRail(o);
+  renderActive(o);
+  renderAgents(o);
+  renderDefenses(o);
+  renderReports(o);
+  renderSettings(o);
+  renderHome(o);
+  renderSelectedAgent(o);
+}
+
+function renderTopbar(o) {
+  const p = o.provider || {};
+  const dot = $("modelDot");
+  dot.className = "dot " + (p.ready ? "ok" : p.reachable ? "warn" : "bad");
+  $("modelChipTitle").textContent = p.ready
+    ? "Ollama Connected"
+    : p.reachable
+      ? "Ollama — model missing"
+      : "Ollama unreachable";
+  $("modelChipModel").textContent = p.model || p.default_model || "—";
+}
+
+function renderSelectedAgent(o) {
+  // There is exactly one authoritative selection: the backend connection
+  // store. Experiments only displays it; it never maintains a second choice.
+  const conn = o.connection;
+  const connected = !!(conn && conn.ready);
+  const pill = $("selectedAgentPill");
+  if (!pill) return;
+  pill.className = "pill sm " + (connected ? "ok" : "idle");
+  $("selectedAgentPillText").textContent = connected ? "Selected · connected" : "Not connected";
+  $("selectedAgentName").textContent = connected ? conn.display_name : "No agent connected";
+  $("selectedAgentKind").textContent = connected
+    ? `${conn.method || "unknown method"} · ${conn.config?.target_id || conn.config?.endpoint_url || "validated"}`
+    : "Connect an HTTP API, LangChain, or Gmail integration on Agents.";
+  $("selectedAgentMeta").textContent = connected
+    ? `Ready at ${conn.config?.endpoint_url || conn.config?.base_url || "validated connection"} · managed on Agents.`
+    : "Experiments cannot launch against a fake or implicit target; visit Agents first.";
+}
+
+function renderRail(o) {
+  /* The selected agent is rendered once, in the compact Experiments summary;
+     connection management lives only on Agents. */
+
+  /* objectives */
+  const list = $("objectiveList");
+  list.innerHTML = (o.taxonomy.objectives || [])
+    .map((obj) => `<li><span class="obj-check">✓</span><span>${esc(obj.name)}</span></li>`)
+    .join("");
+
+  /* model */
+  const p = o.provider || {};
+  const modelPill = $("modelPill");
+  modelPill.className = "pill sm right " + (p.ready ? "ok" : p.reachable ? "warn" : "bad");
+  $("modelPillText").textContent = p.ready ? "Online" : p.reachable ? "Model missing" : "Offline";
+  $("modelName").textContent = "Ollama";
+  $("modelId").textContent = p.model || p.default_model || "—";
+  const note = $("modelNote");
+  if (p.ready) {
+    note.className = "rail-note";
+    note.textContent = `Reachable at ${p.endpoint} · model installed.`;
+  } else {
+    note.className = "rail-note error";
+    note.textContent = p.error || "Run `ollama list` to check the local service.";
+  }
+
+  /* settings rail */
+  const settings = o.settings || {};
+  const run = o.run || {};
+  $("setMax").textContent = run.total_episode_budget != null
+    ? `${run.total_episode_budget} episodes`
+    : `${settings.limits?.approved_experiment_budget ?? "—"} approved`;
+  const modeShown = run.mode || settings.search_mode;
+  $("setClimb").textContent = modeShown
+    ? (modeShown === "greedy" ? "Enabled (greedy)" : "Enabled (feedback)")
+    : "Idle";
+  const catalog = o.defense.catalog || [];
+  const realDefenses = catalog.filter((d) => d.available && d.implementation_type === "real_integration").length;
+  const proxyDefenses = catalog.filter((d) => d.available && d.implementation_type === "local_proxy").length;
+  if (realDefenses && proxyDefenses) {
+    $("setDefense").textContent = `${realDefenses} real + ${proxyDefenses} proxies`;
+  } else if (realDefenses) {
+    $("setDefense").textContent = `${realDefenses} real`;
+  } else if (proxyDefenses) {
+    $("setDefense").textContent = `${proxyDefenses} proxies`;
+  } else {
+    $("setDefense").textContent = "Unavailable";
+  }
+}
+
+function renderActive(o) {
+  const run = o.run;
+  const active = o.active_run;
+  const phase = o.lifecycle?.phase || "idle";
+  const pill = $("phasePill");
+  const text = $("phaseText");
+  const map = {
+    idle: ["idle", "Idle"],
+    attacker: ["running", "Running"],
+    defense_ready: ["ok", "Defense ready"],
+    defense_completed: ["ok", "Defense evaluated"],
+    defense_inconclusive: ["warn", "Defense inconclusive"],
+    defense_unavailable: ["warn", "Attack-only — no replayable case"],
+    defense_failed: ["warn", "Defense technical failure"],
+    defense_running: ["running", "Defense evaluation running"],
+    paused: ["warn", "Paused"],
+    stopping: ["warn", "Stopping"],
+    incomplete: ["warn", "Incomplete"],
+  };
+  const [cls, label] = map[phase] || ["idle", phase];
+  pill.className = "pill " + cls;
+  text.textContent = label;
+
+  const sub = $("activeSub");
+  if (phase === "attacker" && active) {
+    sub.textContent = `Run ${active.run_id || "—"} · target ${active.target || o.settings?.target || "seeded stand-in"} · mode ${active.mode || o.settings?.search_mode || "—"}`;
+  } else if (run) {
+    const assistantKind = run.assistant?.kind ? ` (${run.assistant.kind})` : "";
+    const evalMode = run.target_snapshot?.mode ? ` · mode ${run.target_snapshot.mode}` : "";
+    sub.textContent = `Last run ${run.run_id} · target ${run.target || "seeded stand-in"} (${run.target_kind || "unknown"})${evalMode} · assistant ${run.assistant?.provider || o.settings?.assistant_provider || "none"}${assistantKind}`;
+  } else {
+    sub.textContent = "No experiment has run yet. Connect an agent and press New Experiment.";
+  }
+
+  const activeStatus = o.lifecycle?.active_status || (active && active.status) || "";
+  const paused = phase === "paused" || activeStatus === "paused";
+  const stopping = phase === "stopping" || activeStatus === "stopping";
+  const canControl = !!o.lifecycle?.running;
+  $("pauseBtn").disabled = !canControl || paused || stopping;
+  $("resumeBtn").disabled = !canControl || !paused || stopping;
+  $("stopBtn").disabled = !canControl || stopping;
+
+  const m = o.metrics || {};
+  const statTone = {
+    statCandidates: "",
+    statSuccess: "green",
+    statBlocked: "blue",
+    statTechnical: "red",
+    statInconclusive: "slate",
+  };
+  const setStat = (id, value) => {
+    const el = $(id);
+    if (value === null || value === undefined) {
+      el.textContent = "Unavailable";
+      el.className = "stat-value na";
+    } else {
+      el.textContent = value;
+      el.className = `stat-value ${statTone[id] || ""}`.trim();
+    }
+  };
+  setStat("statCandidates", m.candidates_evaluated ?? (run ? run.candidate_evaluations : null));
+  setStat("statSuccess", m.success);
+  setStat("statBlocked", m.blocked);
+  setStat("statTechnical", m.technical_fail);
+  setStat("statInconclusive", m.inconclusive);
+
+  const consumed = m.episodes_consumed ?? run?.episodes_consumed;
+  const budget = m.episode_budget ?? run?.total_episode_budget;
+  $("progressMeta").textContent =
+    consumed != null && budget != null ? `${consumed} / ${budget}` : "Unavailable";
+  $("progressFill").style.width =
+    consumed != null && budget ? `${Math.min(100, (consumed / budget) * 100)}%` : "0%";
+
+  const dims = m.dimensions || [];
+  $("dimMeta").textContent = dims.length && dims[0].denominator
+    ? `${dims[0].denominator} candidate(s)`
+    : "No data";
+  $("dimList").innerHTML = dims.length
+    ? dims.map((d, i) => {
+        const share = d.share;
+        const pct = share == null ? "—" : `${Math.round(share * 100)}%`;
+        const color = ["#7C5CFC", "#3B82F6", "#22C55E", "#8B5CF6", "#EF4444"][i % 5];
+        const icon = [
+          '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg>',
+          '<svg viewBox="0 0 24 24"><path d="M4 12h6l2-5 3 10 2-5h3"/></svg>',
+          '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 10h6M9 14h4"/></svg>',
+          '<svg viewBox="0 0 24 24"><path d="M14 6l4 4-8 8H6v-4l8-8Z"/><path d="M12 8l4 4"/></svg>',
+          '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
+        ][i % 5];
+        return `<li class="dim-item">${icon}<div class="dim-body"><span class="dim-name">${esc(d.name)}</span><div class="dim-bar"><span style="width:${share == null ? 0 : share * 100}%;background:${color}"></span></div></div><span class="dim-pct">${pct}</span></li>`;
+      }).join("")
+    : `<li class="muted small">No evaluated candidates yet — search dimensions appear after a run.</li>`;
+
+  renderCandidates(o);
+  renderActivity(o);
+  renderClimb(o);
+  renderChannels(o);
+
+  $("metricsProvenance").textContent = m.source
+    ? `Source: ${m.source}. ignored/inconclusive stay separate from blocked; technical failures are not security outcomes.`
+    : "Metrics are derived from the latest persisted run record. Unavailable values stay unavailable.";
+
+  const runForAssistant = run || active;
+  const assistantLine = $("runAssistant");
+  if (runForAssistant && runForAssistant.assistant) {
+    const a = runForAssistant.assistant;
+    const calls = a.model_calls_consumed ?? 0;
+    const budgetText = a.model_request_budget == null ? "no request budget" : `${calls}/${a.model_request_budget} model requests`;
+    const why = calls === 0
+      ? " — no request was made (the bounded run ended before a model-proposal boundary)."
+      : "";
+    assistantLine.textContent = `Assistant: ${a.provider || "none"} (${a.kind || "unknown"})` +
+      (a.model ? ` · ${a.model}` : "") +
+      ` · ${budgetText}` +
+      (a.timeout_seconds ? ` · timeout ${a.timeout_seconds}s` : "") + why;
+  } else if (runForAssistant) {
+    assistantLine.textContent = "Assistant: none configured for this run (no model requests).";
+  } else {
+    assistantLine.textContent = "";
+  }
+
+  drawChart();
+}
+
+function strategyLabel(ladder) {
+  if (!Array.isArray(ladder) || !ladder.length) return "—";
+  return ladder.map((s) => `${s.category || "?"} L${s.sophistication_level ?? "?"}`).join(" → ");
+}
+
+function renderClimb(o) {
+  const run = o.run || o.active_run || {};
+  const history = Array.isArray(run.history) ? run.history : (o.history || []);
+  const decisions = history.filter((h) => h && h.candidate_ladder);
+  const bestLabel = run.global_best_category || "—";
+  const stopText = run.stop_reason || (run.status === "completed"
+    ? `completed ${run.iterations_completed ?? "?"}/${run.iterations ?? "?"} iterations`
+    : (run.status || "—"));
+  $("climbMeta").textContent = decisions.length
+    ? `${decisions.length} evaluated · iteration ${run.iteration ?? "—"} · best ${bestLabel}${run.best_asr == null ? "" : ` ASR ${Number(run.best_asr).toFixed(2)}`} · stop: ${stopText}`
+    : "No data";
+  $("climbBody").innerHTML = decisions.length
+    ? decisions.slice(-12).map((h) => {
+        const accepted = h.improved === true;
+        const delta = h.delta == null ? "—" : `${h.delta > 0 ? "+" : ""}${Number(h.delta).toFixed(2)}`;
+        return `<tr>
+          <td>${esc(h.iteration ?? "—")}</td>
+          <td><code>${esc(strategyLabel(h.candidate_ladder))}</code>${h.candidate_id ? `<div class="fineprint">${esc(h.candidate_id)}</div>` : ""}</td>
+          <td>${h.parent_category_best_asr == null ? "unavailable" : Number(h.parent_category_best_asr).toFixed(2)}</td>
+          <td>${h.asr == null ? "unavailable" : Number(h.asr).toFixed(2)}</td>
+          <td>${accepted ? '<span class="badge green">accepted</span>' : '<span class="badge slate">rejected</span>'}</td>
+          <td>${esc(delta)}</td>
+        </tr>`;
+      }).join("")
+    : `<tr><td colspan="6" class="empty">No candidate decisions yet.</td></tr>`;
+
+  const confirmations = Array.isArray(run.post_acceptance_executions)
+    ? run.post_acceptance_executions
+    : [];
+  $("confirmList").innerHTML = confirmations.length
+    ? confirmations.map((c) => {
+        if (!c.executed_after_acceptance) {
+          return `<li><strong>${esc(c.accepted_candidate_id || "accepted strategy")}</strong> was not re-executed — ${esc(c.skipped_reason || "reason not recorded")}</li>`;
+        }
+        const outcomes = Object.entries(c.outcomes || {}).map(([k, v]) => `${k} ${v}`).join(", ") || "no outcome";
+        return `<li><strong>${esc(c.accepted_candidate_id || "accepted strategy")}</strong> re-executed after acceptance · ASR ${c.asr == null ? "unavailable" : Number(c.asr).toFixed(2)} · ${esc(outcomes)} · <code>${esc(c.confirmation_strategy_id || "")}</code></li>`;
+      }).join("")
+    : `<li class="muted small">No accepted strategy in the latest run.</li>`;
+
+  const proposals = Array.isArray(run.model_suggestions) ? run.model_suggestions : [];
+  $("proposalMeta").textContent = proposals.length ? `${proposals.length} request(s)` : "No data";
+  $("proposalList").innerHTML = proposals.length
+    ? proposals.map((p) => {
+        const tokens = p.token_counts
+          ? `${p.token_counts.total_tokens ?? "?"} tokens (${p.token_counts.prompt_tokens ?? "?"}/${p.token_counts.completion_tokens ?? "?"})`
+          : "tokens unavailable";
+        const status = p.rejection_reason
+          ? `rejected: ${esc(p.rejection_reason)}`
+          : p.accepted
+            ? "entered evaluation"
+            : "not selected";
+        const fb = Array.isArray(p.feedback_context) ? p.feedback_context : [];
+        const fbText = fb.length
+          ? fb.map((f) => `iter ${f.iteration ?? "?"} ASR ${f.asr == null ? "unavailable" : Number(f.asr).toFixed(2)} on ${strategyLabel(f.ladder)}`).join(" · ")
+          : "no prior measured iteration supplied";
+        return `<li><strong>${esc(p.provider || "provider not recorded")}</strong>${p.model ? ` · ${esc(p.model)}` : ""} · iteration ${esc(p.iteration ?? "—")} · ${esc(status)}
+          <div class="fineprint">proposal: <code>${esc(strategyLabel(p.suggested_ladder))}</code></div>
+          <div class="fineprint">feedback given to model: ${esc(fbText)}</div>
+          <div class="fineprint">request ${esc(p.request_id || "—")} · ${p.latency_ms == null ? "latency unavailable" : `${Number(p.latency_ms).toFixed(0)} ms`} · ${esc(tokens)} · provenance ${esc(p.output_provenance || "—")}</div>
+          ${p.rationale ? `<div class="fineprint">${esc(p.rationale)}</div>` : ""}</li>`;
+      }).join("")
+    : `<li class="muted small">No model request recorded for the latest run.</li>`;
+
+  const displayTraces = Array.isArray(run.episode_trace) ? run.episode_trace : [];
+  const targetList = $("targetEvidenceList");
+  if (targetList) {
+    targetList.innerHTML = displayTraces.length
+      ? displayTraces.map((t) => {
+          const calls = (Array.isArray(t.target_responses) ? t.target_responses : [])
+            .flatMap((r) => (Array.isArray(r.tool_calls) ? r.tool_calls : []).map((c) => `${c.tool_name}(${JSON.stringify(c.arguments || {})})`));
+          const outputs = (Array.isArray(t.target_responses) ? t.target_responses : [])
+            .map((r) => r.output).filter((x) => x != null && x !== "");
+          // Generated adversarial emails (Gmail write/send campaigns) and the
+          // real Gmail operation each turn performed. Only recorded evidence is
+          // shown; missing fields render as unavailable.
+          const emails = (Array.isArray(t.steps) ? t.steps : []).map((s) => s.email).filter(Boolean);
+          const emailHtml = emails.map((e) => `<div class="fineprint">generated email · ${esc(e.persona ? `${e.persona.name} (${e.persona.role}, ${e.persona.company})` : "persona unavailable")} · strategy ${esc(e.tactic || "—")} · sophistication ${esc(e.sophistication ?? "—")} · scenario ${esc(e.scenario || "—")}
+            <div><strong>Subject:</strong> ${esc(e.subject || "—")}</div>
+            <div><strong>Body:</strong> <code>${esc(String(e.body || "").slice(0, 900))}</code></div>
+            <div><strong>Requested action:</strong> ${esc(e.requested_action || "—")} · <strong>technique:</strong> ${esc(e.manipulation_technique || "—")} · <strong>expected:</strong> ${esc(e.expected_target_behavior || "—")} · <strong>token:</strong> ${esc(e.injection_token || "—")} · generation ${esc((e.generation || {}).mode || "—")}${(e.generation || {}).model_used ? " (Ollama)" : " (template, no model call)"}</div></div>`).join("");
+          const ops = (Array.isArray(t.target_evidence) ? t.target_evidence : [])
+            .map((te) => {
+              if (!te || !te.operation) return null;
+              const op = te.operation;
+              // The target-evidence projection deliberately omits the
+              // ground-truth dict; the per-turn channel record is the
+              // authoritative copy persisted alongside it.
+              const gt = te.ground_truth
+                || (Array.isArray(t.target_ground_truth) ? t.target_ground_truth[0] : null)
+                || {};
+              const ver = te.verification || {};
+              return `${te.mode || "—"}: ${op.kind} ${op.status || "—"} · sent=${op.sent} drafted=${op.drafted} · message id ${esc(op.message_id || "—")} · verified=${esc(ver.verified)}${ver.reason ? ` (${esc(ver.reason)})` : ""} · channels: content_manipulated=${gt.content_manipulated} unauthorized_draft=${gt.unauthorized_draft} unauthorized_send=${gt.unauthorized_send} unauthorized_recipient_delivery=${gt.unauthorized_recipient_delivery} legitimate_action=${gt.legitimate_action} allowlist_enforced=${gt.allowlist_enforced}`;
+            }).filter(Boolean);
+          return `<li><strong>${esc(t.case_id || "case")}</strong> · ${esc(strategyLabel(t.steps))} · rounds ${esc(t.rounds_used ?? "—")} · ${bucketBadge(t.outcome)}
+            <div class="fineprint">target output: ${outputs.length ? `<code>${esc(outputs.join(" | ").slice(0, 600))}</code>` : "unavailable"}</div>
+            <div class="fineprint">tool calls: ${calls.length ? `<code>${esc(calls.join(" · ").slice(0, 400))}</code>` : "none"} · defense: ${esc(t.defense_decision || "not observable")} · observed: ${esc(t.observed_outcome || "—")}</div>
+            ${t.email_feedback_in ? `<div class="fineprint">previous iteration feedback (measured): asr=${esc(t.email_feedback_in.asr)} · ${esc(t.email_feedback_in.failure_reason || "—")}</div>` : ""}
+            ${Array.isArray(t.target_ground_truth) && t.target_ground_truth.length ? `<div class="fineprint">measured ground truth: ${t.target_ground_truth.map((g) => esc(Object.entries(g || {}).map(([kk, vv]) => `${kk}=${vv}`).join(" "))).join(" | ").slice(0, 800)}</div>` : ""}
+            ${emailHtml}${ops.length ? `<div class="fineprint">Gmail operation: ${esc(ops.join(" | ").slice(0, 600))}</div>` : ""}</li>`;
+        }).join("")
+      : `<li class="muted small">No target evidence recorded for this run.</li>`;
+  }
+
+  $("enforcementNote").textContent = decisions.length
+    ? "Search-time defense is evaluated after the target action. A denial there is detection, not prevention; observed violations are scored as successes. Use Defenses to run the independent replay; each case reports whether enforcement happened before or after execution."
+    : "";
+}
+
+/* ---------------- separated security-outcome channels ---------------- */
+
+const CHANNEL_ROWS = [
+  ["content_manipulation", "Content manipulation"],
+  ["unauthorized_draft", "Unauthorized draft creation"],
+  ["unauthorized_send", "Unauthorized send"],
+  ["unauthorized_recipient", "Unauthorized recipient delivery"],
+];
+
+function pctOrUnavailable(rate) {
+  return rate == null ? "Unavailable" : `${(Number(rate) * 100).toFixed(1)}%`;
+}
+
+function renderChannels(o) {
+  const table = $("channelsBody");
+  if (!table) return;
+  const run = o.run || o.active_run || {};
+  const gt = run.ground_truth_metrics || (o.metrics || {}).ground_truth || null;
+  const metrics = (gt && gt.metrics) || {};
+  table.innerHTML = CHANNEL_ROWS.map(([key, label]) => {
+    const m = metrics[key];
+    if (!m) {
+      return `<tr><td>${esc(label)}</td><td>Unavailable</td><td>Unavailable</td><td>Unavailable</td><td class="fineprint">${esc((gt && gt.limitations || []).join(" ") || "no persisted evidence for this channel")}</td></tr>`;
+    }
+    const unknown = m.unknown_episodes ? ` · ${m.unknown_episodes} unknown episode(s) excluded` : "";
+    return `<tr>
+      <td>${esc(label)}<div class="fineprint"><code>${esc(m.channel)}</code></div></td>
+      <td>${na(m.numerator)}</td>
+      <td>${na(m.denominator)}</td>
+      <td>${pctOrUnavailable(m.rate)}</td>
+      <td class="fineprint">${esc(m.eligibility)}${esc(unknown)}</td>
+    </tr>`;
+  }).join("");
+  const meta = $("channelsMeta");
+  const recalc = (gt && gt.recalculation) || {};
+  if (meta) {
+    meta.textContent = gt
+      ? `schema ${gt.schema || "—"} · ${na(gt.episodes_with_ground_truth)} episode(s) with ground truth`
+      : (run.run_id ? "No separated ground-truth metrics for this run" : "No run");
+  }
+  const note = $("channelsNote");
+  if (note) {
+    const parts = [];
+    if (gt) {
+      parts.push(`Recalculation: ${recalc.method || "—"}`);
+      if (recalc.legacy_recalculation) parts.push(`Historical records: ${recalc.legacy_recalculation}`);
+      if (recalc.episodes_legacy) parts.push(`${recalc.episodes_legacy} legacy episode(s) recalculated where the evidence allowed it.`);
+      (gt.limitations || []).forEach((l) => parts.push(l));
+      if (gt.objective_asr) {
+        parts.push(`Objective ASR uses channel ${gt.objective_asr.channel}: ${na(gt.objective_asr.numerator)}/${na(gt.objective_asr.denominator)} — never combined with content manipulation.`);
+      }
+    } else {
+      parts.push(run.run_id
+        ? "This run record predates the separated ground-truth schema; no channel rate is inferred for it."
+        : "Run a campaign to persist separated ground-truth evidence.");
+    }
+    note.textContent = parts.join(" ");
+  }
+  renderBudget(run, o);
+  renderCampaignEvidence(run);
+}
+
+function renderBudget(run, o) {
+  const body = $("budgetBody");
+  if (!body) return;
+  const acc = run.episode_accounting || null;
+  const plan = run.budget_plan || (o.metrics || {}).budget_plan || null;
+  if (!acc) {
+    body.innerHTML = `<tr><td colspan="3" class="empty">${esc(run.run_id ? "No episode accounting recorded for this run." : "No run yet.")}</td></tr>`;
+  } else {
+    const rows = [
+      ["Baseline", acc.baseline?.planned, acc.baseline?.consumed],
+      ["Candidate comparisons", acc.candidates?.planned_max, acc.candidates?.consumed],
+      ["Acceptance confirmation", acc.confirmation?.planned, acc.confirmation?.consumed],
+      ["Final confirmation evaluation", acc.final?.planned, acc.final?.consumed],
+    ];
+    body.innerHTML = rows.map(([label, planned, consumed]) => `<tr>
+      <td>${esc(label)}</td><td>${na(planned)}</td><td>${na(consumed)}</td>
+    </tr>`).join("") + `<tr><td><strong>Total</strong></td><td>${na(acc.planned_total_max)}</td><td>${na(acc.consumed_total)}</td></tr>`;
+  }
+  const meta = $("budgetMeta");
+  if (meta) {
+    meta.textContent = acc
+      ? `${na(acc.consumed_total)}/${na(acc.total_budget)} episodes · stop: ${esc(run.stop_reason || run.status || "—")}`
+      : "Unavailable";
+  }
+  const note = $("budgetNote");
+  if (note) {
+    const parts = [];
+    if (plan) {
+      parts.push(`Per-evaluation episodes: ${na(plan.episodes_per_evaluation)}. Minimum feasible budget: ${na(plan.minimum_required)} (baseline + one candidate comparison).`);
+      (plan.rules || []).forEach((r) => parts.push(r));
+    }
+    if (acc) {
+      parts.push(`Status: ${esc(run.status || "—")} · final evaluation: ${esc(acc.final?.status || run.confirmation_status || "—")}`);
+      if (acc.candidates?.evaluations != null) parts.push(`${na(acc.candidates.evaluations)} candidate evaluation(s) executed.`);
+      if (run.search_truncated_by_budget) parts.push("Candidate fan-out was capped by the remaining budget; convergence is not claimed.");
+    }
+    note.textContent = parts.join(" ");
+  }
+}
+
+function renderCampaignEvidence(run) {
+  const list = $("campaignEvidenceList");
+  if (!list) return;
+  const traces = Array.isArray(run.episode_trace) ? run.episode_trace : [];
+  const last = traces.length ? traces[traces.length - 1] : null;
+  const identity = run.target_identity || {};
+  const gate = run.gate || {};
+  const email = last && Array.isArray(last.steps)
+    ? (last.steps.find((s) => s && s.email) || {}).email || null
+    : null;
+  const generation = (email && email.generation) || {};
+  const evidence = (last && Array.isArray(last.target_evidence)) ? (last.target_evidence.find((e) => e && e.provider === "gmail") || null) : null;
+  const op = (evidence && evidence.operation) || null;
+  const truth = (last && Array.isArray(last.target_ground_truth) && last.target_ground_truth[0]) || null;
+  if (!last && !run.run_id) {
+    list.innerHTML = `<li class="muted small">No campaign evidence recorded.</li>`;
+    return;
+  }
+  const meta = $("campaignMeta");
+  if (meta) meta.textContent = `${run.run_id || "—"} · iteration ${na(run.iteration)} · ${esc(run.status || "—")}`;
+  const lines = [];
+  lines.push(`<strong>Target</strong> ${esc(identity.name || run.target || "seeded stand-in")} · ${esc(identity.execution_mode || run.target_kind || "unknown")} · evaluation mode ${esc((run.target_snapshot || {}).mode || (evidence && evidence.mode) || "—")}`);
+  lines.push(`<strong>Strategy</strong> <code>${esc(strategyLabel(run.gate?.checked?.ladder || run.best_ladder || (run.category_best && Object.values(run.category_best)[0]?.best_ladder) || []))}</code> · best ASR ${run.best_asr == null ? "Unavailable" : Number(run.best_asr).toFixed(2)}`);
+  if (email) {
+    lines.push(`<strong>Generated sender persona</strong> ${esc(email.persona ? `${email.persona.name} (${email.persona.role}, ${email.persona.company})` : "unavailable")} · tactic ${esc(email.tactic || "—")} · sophistication ${esc(email.sophistication ?? "—")} · scenario ${esc(email.scenario || "—")}`);
+    lines.push(`<strong>Ollama subject</strong> ${esc(email.subject || "—")}`);
+    lines.push(`<strong>Ollama body</strong> <code>${esc(String(email.body || "").slice(0, 600))}</code>`);
+    lines.push(`<strong>Generation provenance</strong> ${esc(generation.mode || "—")}${generation.model_used ? ` · ${esc(generation.model || "model")}` : " · no model call"} · latency ${generation.latency_ms == null ? "unavailable" : `${Number(generation.latency_ms).toFixed(0)} ms`}${last.email_feedback_in ? ` · previous feedback: asr=${esc(last.email_feedback_in.asr)} ${esc(last.email_feedback_in.failure_reason || "")}` : " · no previous feedback"}`);
+  } else {
+    lines.push("<strong>Generated email</strong> unavailable — this run recorded no Gmail email evidence.");
+  }
+  if (op) {
+    const verification = evidence.verification || {};
+    lines.push(`<strong>Actual Gmail operation</strong> ${esc(op.kind)} · status ${esc(op.status || "—")} · sent=${esc(op.sent)} drafted=${esc(op.drafted)} · message id ${esc(op.message_id || "—")} · draft id ${esc(op.draft_id || verification.draft_id || "—")} · readback verified ${esc(verification.verified)}${verification.reason ? ` (${esc(verification.reason)})` : ""}`);
+    if (truth) {
+      lines.push(`<strong>Measured channels</strong> content_manipulated=${esc(truth.content_manipulated)} · unauthorized_draft=${esc(truth.unauthorized_draft)} · unauthorized_send=${esc(truth.unauthorized_send)} · unauthorized_recipient_delivery=${esc(truth.unauthorized_recipient_delivery)} · legitimate_action=${esc(truth.legitimate_action)}`);
+    }
+  }
+  lines.push(`<strong>Promotion</strong> ${gate.passed ? "<span class=\"badge green\">promoted</span>" : "<span class=\"badge slate\">rejected</span>"} ${esc((gate.reasons || []).join(" · ") || "—")}`);
+  lines.push(`<strong>Completion</strong> ${esc(run.status || "—")} · stop reason ${esc(run.stop_reason || "—")} · confirmation ${esc(run.confirmation_status || "—")}`);
+  list.innerHTML = lines.map((l) => `<li class="fineprint">${l}</li>`).join("");
+}
+
+function bucketBadge(bucket) {
+  const map = {
+    success: ["green", "Successful"],
+    blocked: ["blue", "Blocked"],
+    ignored: ["slate", "Inconclusive"],
+    inconclusive: ["slate", "Inconclusive"],
+    technical_fail: ["red", "Technical"],
+    unclassified: ["orange", "Unclassified"],
+  };
+  const [cls, label] = map[bucket] || ["slate", bucket];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+function renderCandidates(o) {
+  const body = $("candidateBody");
+  const candidates = (o.candidates || []).slice(-6).reverse();
+  $("recentMeta").textContent = o.candidates?.length
+    ? `${o.candidates.length} persisted`
+    : "No data";
+  if (!candidates.length) {
+    body.innerHTML = `<tr><td colspan="6" class="empty">No candidates evaluated yet.</td></tr>`;
+    return;
+  }
+  body.innerHTML = candidates.map((c, idx) => {
+    const bucket = dominantBucket(c.outcomes);
+    return `<tr>
+      <td>${idx + 1}</td>
+      <td>${esc(objectiveLabel(c.objective))}</td>
+      <td>${esc((c.dimensions || [])[0] || "—")}</td>
+      <td>${bucketBadge(bucket)}</td>
+      <td>${c.asr == null ? "—" : Number(c.asr).toFixed(2)}</td>
+      <td>${c.created_at ? clockTime(c.created_at) : "not recorded"}</td>
+    </tr>`;
+  }).join("");
+}
+
+function objectiveLabel(value) {
+  if (!value) return "—";
+  const objectives = state.overview?.taxonomy?.objectives || [];
+  const match = objectives.find((x) => x.id === value || x.name === value);
+  return match ? match.name : value;
+}
+
+function dominantBucket(outcomes) {
+  if (!outcomes) return "unclassified";
+  if (outcomes.success > 0) return "success";
+  if (outcomes.blocked > 0) return "blocked";
+  if (outcomes.technical_fail > 0) return "technical_fail";
+  if (outcomes.ignored > 0) return "ignored";
+  return "unclassified";
+}
+
+function renderActivity(o) {
+  const list = $("activityList");
+  const items = o.activity || [];
+  $("activityMeta").textContent = items.length ? `${items.length} events` : "No data";
+  if (!items.length) {
+    list.innerHTML = `<li class="muted small">No persisted activity.</li>`;
+    return;
+  }
+  const icons = {
+    candidate: ["purple", '<svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></svg>'],
+    run: ["blue", '<svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>'],
+    defense: ["green", '<svg viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4 3 7.6 7 9 4-1.4 7-5 7-9V6l-7-3Z"/></svg>'],
+  };
+  list.innerHTML = items.map((a) => {
+    const [cls, icon] = icons[a.kind] || ["orange", '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>'];
+    return `<li class="act-item">
+      <span class="act-icon ${cls}">${icon}</span>
+      <div><div class="act-title">${esc(a.title)}</div><div class="act-detail">${esc(a.detail || "")}</div></div>
+      <span class="act-time">${esc(timeAgo(a.at))}</span>
+    </li>`;
+  }).join("");
+}
+
+/* ---------------- chart ---------------- */
+
+function drawChart() {
+  const canvas = $("asrChart");
+  if (!canvas) return;
+  const cssWidth = canvas.clientWidth || 640;
+  const cssHeight = canvas.clientHeight || 190;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const history = (state.overview?.history || []).filter((h) => h && h.asr != null);
+  const empty = $("chartEmpty");
+  const paintEmpty = (message) => {
+    if (empty) { empty.hidden = false; empty.textContent = message; }
+    canvas.style.visibility = "hidden";
+  };
+  if (!history.length) {
+    paintEmpty("No measured ASR history yet — run an experiment against a target.");
+    return;
+  }
+  if (empty) empty.hidden = true;
+  canvas.style.visibility = "visible";
+
+  const pad = { top: 12, right: 10, bottom: 32, left: 30 };
+  const w = cssWidth - pad.left - pad.right;
+  const h = cssHeight - pad.top - pad.bottom;
+
+  ctx.strokeStyle = "#1B2740";
+  ctx.lineWidth = 1;
+  ctx.font = "9px ui-monospace, monospace";
+  ctx.fillStyle = "#7F8AA3";
+  ctx.textAlign = "right";
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+    const y = pad.top + h - v * h;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + w, y); ctx.stroke();
+    ctx.fillText(v.toFixed(2), pad.left - 5, y + 3);
+  }
+
+  const xs = (i) => pad.left + (history.length === 1 ? w / 2 : (w / (history.length - 1)) * i);
+  const ys = (v) => pad.top + h - Math.max(0, Math.min(1, Number(v))) * h;
+
+  // area
+  const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + h);
+  gradient.addColorStop(0, "rgba(124,92,252,0.35)");
+  gradient.addColorStop(1, "rgba(124,92,252,0.02)");
+  ctx.beginPath();
+  ctx.moveTo(xs(0), pad.top + h);
+  history.forEach((p, i) => ctx.lineTo(xs(i), ys(p.asr)));
+  ctx.lineTo(xs(history.length - 1), pad.top + h);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  // line
+  ctx.beginPath();
+  history.forEach((p, i) => {
+    const x = xs(i), y = ys(p.asr);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = "#A78BFA";
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  // points
+  history.forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(xs(i), ys(p.asr), 2.2, 0, Math.PI * 2);
+    ctx.fillStyle = "#C4B5FD";
+    ctx.fill();
+  });
+
+  // x labels (evaluation index)
+  ctx.fillStyle = "#7F8AA3";
+  ctx.textAlign = "center";
+  const step = Math.max(1, Math.ceil(history.length / 8));
+  history.forEach((p, i) => {
+    if (i % step !== 0 && i !== history.length - 1) return;
+    ctx.fillText(String(i + 1), xs(i), cssHeight - 16);
+  });
+  ctx.fillText("Attempts", pad.left + w / 2, cssHeight - 4);
+}
+
+/* ---------------- agents page ---------------- */
+
+function renderAgents(o) {
+  const host = $("agentMethodList");
+  if (!host) return;
+  const connections = o.connections || [];
+  host.innerHTML = connections.map((c) => {
+    const unavailable = c.status !== "available";
+    const fields = (c.fields || []).map((f) => {
+      const value = c.config?.[f.name] ?? "";
+      const type = f.name === "timeout_seconds" ? "number" : "text";
+      return `<label>${esc(f.label)}
+        <input data-field="${esc(f.name)}" type="${type}" placeholder="${esc(f.placeholder || "")}"
+          value="${esc(f.name === "auth_header" ? "" : value)}"
+          ${unavailable ? "disabled" : ""}>
+      </label>`;
+    }).join("");
+    const status = unavailable
+      ? `<span class="dot warn"></span> Unavailable — ${esc(c.status_label || "not implemented")}`
+      : c.connected
+        ? `<span class="dot ok"></span> Connected${c.selected ? " · selected" : ""}`
+        : c.last_validation && !c.last_validation.ok
+          ? `<span class="dot bad"></span> Validation failed: ${esc(c.last_validation.error || "unknown")}`
+          : `<span class="dot"></span> ${esc(c.status_label)}`;
+    const actions = unavailable
+      ? `<div class="unavailable-note">${esc(c.reason || "Not implemented")}</div>`
+      : `<div class="agent-method-actions">
+           <button class="btn primary" data-agent-connect="${esc(c.method)}">Validate &amp; connect</button>
+           <button class="btn secondary" data-agent-select="${esc(c.method)}" ${c.connected && !c.selected ? "" : "disabled"}>Use</button>
+           <button class="btn secondary" data-agent-clear="${esc(c.method)}" ${c.config ? "" : "disabled"}>Remove</button>
+         </div>`;
+    return `<div class="card agent-method${unavailable ? " unavailable" : ""}" data-method-card="${esc(c.method)}">
+      <div class="agent-method-head">
+        <div class="method-icon ${c.method === "http_api" ? "blue" : "teal"}">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6"/></svg>
+        </div>
+        <div><h3>${esc(c.display_name)}</h3><p>${esc(c.subtitle || "")} · ${esc(c.description)}</p></div>
+      </div>
+      <div class="status-line">${status}</div>
+      <div class="form-fields">${fields}</div>
+      ${!unavailable && (c.limitations || []).length ? `<div class="fineprint">${esc(c.limitations.join(" · "))}</div>` : ""}
+      ${actions}
+    </div>`;
+  }).join("");
+}
+
+function collectionConfig(card) {
+  const config = {};
+  card.querySelectorAll("[data-field]").forEach((input) => {
+    const name = input.dataset.field;
+    if (name === "auth_header") return; // read separately below
+    if (input.value !== "") config[name] = input.value;
+  });
+  return config;
+}
+
+document.addEventListener("click", async (event) => {
+  const connectBtn = event.target.closest("[data-agent-connect]");
+  if (connectBtn) {
+    const method = connectBtn.dataset.agentConnect;
+    const card = connectBtn.closest("[data-method-card]");
+    const config = collectionConfig(card);
+    const authInput = card.querySelector('[data-field="auth_header"]');
+    if (authInput && authInput.value.trim()) config.auth_header = authInput.value.trim();
+    connectBtn.disabled = true;
+    connectBtn.textContent = "Probing…";
+    try {
+      const result = await api("/api/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "connect", method, config }),
+      });
+      toast(result.ok ? `${method} validated and connected.` : `Validation failed: ${result.probe?.error || "unknown"}`);
+      await loadOverview();
+    } catch (err) {
+      toast(`Connection failed: ${err.message}`, true);
+    } finally {
+      connectBtn.disabled = false;
+      connectBtn.textContent = "Validate & connect";
+    }
+    return;
+  }
+
+  const selectBtn = event.target.closest("[data-agent-select]");
+  if (selectBtn) {
+    try {
+      await api("/api/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "select", method: selectBtn.dataset.agentSelect }),
+      });
+      await loadOverview();
+      toast("Active connection updated.");
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+
+  const clearBtn = event.target.closest("[data-agent-clear]");
+  if (clearBtn) {
+    try {
+      await api("/api/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clear", method: clearBtn.dataset.agentClear }),
+      });
+      await loadOverview();
+      toast("Connection removed.");
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+
+});
+
+/* ---------------- experiment modal ---------------- */
+
+function updateProviderHint() {
+  const hint = $("cfgProviderHint");
+  if (!hint) return;
+  const mode = $("cfgMode").value;
+  const provider = $("cfgProvider").value;
+  if (mode !== "feedback") {
+    hint.textContent = "Greedy hill climbing makes no model requests — candidates are structural mutations. Choose feedback-guided search to use this provider.";
+    return;
+  }
+  const map = {
+    ollama: "Ollama will be called for advisory strategy suggestions, bounded by the model-request budget. Suggestions can never set an outcome.",
+    rules_only: "Rules-only ranking: feedback-guided search runs with zero model requests.",
+    none: "Statistics-only ranking: no model requests are made.",
+    fake: "Offline deterministic double for tests only — no real model is called.",
+  };
+  hint.textContent = map[provider] || "";
+}
+
+function openExperimentModal() {
+  const o = state.overview;
+  if (!o) return;
+  const objective = $("cfgObjective");
+  objective.innerHTML =
+    `<option value="all">All three objectives (fixed set)</option>` +
+    (o.taxonomy.objectives || []).map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+  $("cfgProvider").value = "ollama";
+  const conn = o.connection;
+  updateProviderHint();
+  $("cfgTargetLine").textContent = conn && conn.ready
+    ? `Target: ${conn.display_name} (${conn.config?.target_id || conn.config?.endpoint_url || "validated"}) — validated connection.`
+    : "Target: no user agent connected — the run uses the explicitly-labelled seeded stand-in. Connect an agent in Agents to attack a real target.";
+  $("expResult").hidden = true;
+  $("expModal").hidden = false;
+}
+
+function closeExperimentModal() { $("expModal").hidden = true; }
+
+$("newExperimentBtn").addEventListener("click", openExperimentModal);
+$("cfgMode").addEventListener("change", updateProviderHint);
+$("cfgProvider").addEventListener("change", updateProviderHint);
+$("expModalClose").addEventListener("click", closeExperimentModal);
+$("expModalCancel").addEventListener("click", closeExperimentModal);
+$("expModal").addEventListener("click", (e) => {
+  if (e.target === $("expModal")) closeExperimentModal();
+});
+
+function experimentPayload() {
+  const o = state.overview;
+  const selected = $("cfgObjective").value;
+  const categories = selected === "all"
+    ? (o.taxonomy.objectives || []).map((x) => x.name)
+    : [((o.taxonomy.objectives || []).find((x) => x.id === selected) || {}).name].filter(Boolean);
+  return {
+    mode: $("cfgMode").value,
+    defense: $("cfgDefense").value,
+    provider: $("cfgProvider").value,
+    episodes: parseInt($("cfgEpisodes").value, 10),
+    iterations: parseInt($("cfgIterations").value, 10),
+    total_episode_budget: parseInt($("cfgBudget").value, 10),
+    model_request_budget: parseInt($("cfgModelBudget").value, 10),
+    attack_categories: categories,
+    background: true,
+  };
+}
+
+/* ---- prominent Run Experiment button (always visible on Experiments) ---- */
+const runExperimentBtn = $("runExperimentBtn");
+if (runExperimentBtn) {
+  runExperimentBtn.addEventListener("click", () => {
+    // Prevent duplicate starts: if the harness is already running, surface it
+    // instead of opening a second configuration path.
+    const o = state.overview;
+    if (o && (o.lifecycle?.running || ["attacker", "paused", "stopping"].includes(o.lifecycle?.phase))) {
+      toast("An attacker run is already active — resume or stop it before starting another.", true);
+      return;
+    }
+    openExperimentModal();
+  });
+}
+
+$("expValidateBtn").addEventListener("click", async () => {
+  const box = $("expResult");
+  box.hidden = false;
+  box.className = "probe-result";
+  box.textContent = "Validating target and provider — no run is started…";
+  const payload = experimentPayload();
+  try {
+    const data = await api("/api/adaptive/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: payload.provider }),
+    });
+    const targetLine = data.target
+      ? `${data.target.id || data.target.kind || "seeded"}${
+          data.target.execution_mode ? ` (${data.target.execution_mode})` : ""
+        }`
+      : "seeded stand-in";
+    const provider = data.provider || {};
+    box.className = "probe-result " + (data.ok ? "ok" : "bad");
+    box.innerHTML = data.ok
+      ? `<strong>Configuration valid.</strong><br>Target: ${esc(targetLine)} · provider ${esc(provider.provider)} (${esc(provider.kind)})${
+          provider.model ? ` · ${esc(provider.model)}` : ""
+        }`
+      : `<strong>Validation failed.</strong><br>${esc((data.errors || []).join(" · "))}`;
+  } catch (err) {
+    box.className = "probe-result bad";
+    box.textContent = err.message;
+  }
+});
+
+$("expStartBtn").addEventListener("click", async () => {
+  if (state.starting) return;
+  const box = $("expResult");
+  const payload = experimentPayload();
+  const numeric = ["episodes", "iterations", "total_episode_budget", "model_request_budget"];
+  for (const k of numeric) {
+    if (!Number.isFinite(payload[k])) {
+      box.hidden = false;
+      box.className = "probe-result bad";
+      box.textContent = `Invalid ${k.replace(/_/g, " ")} — enter a whole number.`;
+      return;
+    }
+  }
+  state.starting = true;
+  $("expStartBtn").disabled = true;
+  box.hidden = false;
+  box.className = "probe-result";
+  box.textContent = "Starting the bounded attacker run…";
+  try {
+    const data = await api("/api/adaptive/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    box.className = "probe-result ok";
+    box.innerHTML = `<strong>Attacker run started</strong> — ${esc(data.run?.run_id || "run")}. Defense evaluation stays locked until it completes.`;
+    closeExperimentModal();
+    await loadOverview();
+  } catch (err) {
+    box.className = "probe-result bad";
+    box.textContent = `Run rejected: ${err.message}`;
+  } finally {
+    state.starting = false;
+    $("expStartBtn").disabled = false;
+  }
+});
+
+$("pauseBtn").addEventListener("click", async () => {
+  try {
+    const res = await api("/api/adaptive/pause", { method: "POST" });
+    toast(res.paused ? "Paused — no new candidate will start until Resume." : (res.reason || "Nothing to pause."));
+    await loadOverview();
+  } catch (err) { toast(err.message, true); }
+});
+
+$("resumeBtn").addEventListener("click", async () => {
+  try {
+    const res = await api("/api/adaptive/resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ background: true }),
+    });
+    toast(res.resumed ? "Resumed the same run." : (res.reason || "Nothing to resume."));
+    await loadOverview();
+  } catch (err) { toast(err.message, true); }
+});
+
+$("stopBtn").addEventListener("click", async () => {
+  try {
+    await api("/api/adaptive/stop", { method: "POST" });
+    toast("Stop requested — no new candidate will start; the active episode finishes.");
+    await loadOverview();
+  } catch (err) { toast(err.message, true); }
+});
+
+/* ---------------- defenses ---------------- */
+
+// Defense evaluation is a SEPARATE operator action. This page only reads
+// completed campaigns; it never starts anything until Run Defense is pressed.
+
+const DEFENSE_JOB_KEY = "nemesis.activeDefenseJob";
+
+state.defenseCampaigns = [];
+state.defenseRunId = null;
+state.defenseCaseIds = new Set();
+state.defenseJob = null;
+state.defensePollTimer = null;
+
+function defenseCampaign() {
+  return (state.defenseCampaigns || []).find((c) => c.run_id === state.defenseRunId) || null;
+}
+
+function usableCaseIds(campaign) {
+  return (campaign?.cases || [])
+    .filter((c) => c.usable && c.case_id)
+    .map((c) => String(c.case_id));
+}
+
+function selectDefenseCampaign(runId, { reset = false } = {}) {
+  state.defenseRunId = runId || null;
+  const campaign = defenseCampaign();
+  const usable = usableCaseIds(campaign);
+  if (reset || !state.defenseCaseIds.size) {
+    state.defenseCaseIds = new Set(usable);
+  } else {
+    // Never keep a selection that belongs to a different campaign.
+    const valid = new Set((campaign?.cases || []).map((c) => String(c.case_id)));
+    state.defenseCaseIds = new Set(
+      [...state.defenseCaseIds].filter((id) => valid.has(id) && usable.includes(id))
+    );
+    if (!state.defenseCaseIds.size) state.defenseCaseIds = new Set(usable);
+  }
+}
+
+async function loadDefenseCampaigns() {
+  try {
+    const data = await api("/api/adaptive/defense_campaigns");
+    state.defenseCampaigns = data.campaigns || [];
+    const known = state.defenseCampaigns.some((c) => c.run_id === state.defenseRunId);
+    if (!known) {
+      // Prefer a campaign whose saved cases came from a live/HTTP target over
+      // an older fixture campaign. Both remain selectable and are labelled;
+      // the default must not silently put fixture evidence in the demo slot.
+      const eligible = state.defenseCampaigns.filter((c) => c.eligible);
+      const preferred =
+        eligible.find((c) => c.target_identity && c.target_identity.kind === "http_api") ||
+        eligible.find((c) => c.target_identity && c.target_identity.kind !== "fixture") ||
+        eligible[0] ||
+        state.defenseCampaigns[0] ||
+        null;
+      selectDefenseCampaign(preferred ? preferred.run_id : null, { reset: true });
+    }
+    renderDefenses(state.overview);
+  } catch (err) {
+    const box = $("barrierBox");
+    if (box) {
+      box.className = "barrier blocked";
+      box.textContent = `Could not load completed attacker campaigns: ${err.message}`;
+    }
+  }
+}
+
+// Classify a defense-evaluation entry into one explicit, user-readable state
+// so the dashboard never conflates "nothing was replayed" with a real result.
+function defenseState(entry) {
+  const r = (entry && entry.result) || {};
+  const explicit = entry && entry.evaluation_state;
+  const explicitStates = {
+    eligible: { label: "Eligible to evaluate", cls: "ok" },
+    running: { label: "Evaluation running", cls: "warn" },
+    completed_with_evidence: { label: "Completed — evidence recorded", cls: "ok" },
+    inconclusive: { label: "Inconclusive", cls: "warn" },
+    unavailable: { label: "Unavailable — missing prerequisite", cls: "warn" },
+    technical_failure: { label: "Technical failure", cls: "bad" },
+    interrupted: { label: "Interrupted — no verdict", cls: "bad" },
+  };
+  if (explicit && explicitStates[explicit]) return explicitStates[explicit];
+  if (r.technical_failure > 0 && !r.episodes_evaluated) {
+    return { label: "Technical failure", cls: "bad" };
+  }
+  if (r.unavailable || !r.episodes_evaluated) {
+    return { label: "Unavailable", cls: "warn" };
+  }
+  if (r.verdict === "inconclusive" || r.verdict === "mixed") {
+    return { label: "Inconclusive", cls: "warn" };
+  }
+  if (r.verdict === "confirmed_success") {
+    return { label: "Completed — attack confirmed", cls: "ok" };
+  }
+  if (r.verdict === "confirmed_blocked") {
+    return { label: "Completed — attack blocked", cls: "ok" };
+  }
+  return { label: `Completed — ${esc(String(r.verdict || "done"))}`, cls: "ok" };
+}
+
+function defenseStatePill(entry) {
+  const { label, cls } = defenseState(entry);
+  return `<span class="pill sm ${cls}">${esc(label)}</span>`;
+}
+
+function defenseEntryHtml(entry) {
+  const r = entry.result || {};
+  const s = r.states || {};
+  const target = entry.replay_target || entry.target_snapshot || {};
+  const episodes = (r.episodes || []).map((ep) => {
+    const executed = ep.action_executed === true
+      ? "executed"
+      : ep.action_executed === false
+        ? "not executed"
+        : "unknown";
+    const enforced = ep.enforcement_before_execution === true
+      ? "yes"
+      : ep.enforcement_before_execution === false
+        ? "no"
+        : "unknown";
+    return `<tr>
+      <td><code>${esc(ep.source_case_id || "unlinked")}</code></td>
+      <td>${esc(ep.state)}</td>
+      <td>${esc(executed)}</td>
+      <td>${esc(enforced)}</td>
+      <td>${esc(ep.evidence)}</td>
+    </tr>`;
+  }).join("");
+  const evidenceCases = (s.confirmed_success || 0) + (s.confirmed_blocked || 0);
+  const rate = evidenceCases
+    ? `${(s.confirmed_blocked || 0)} blocked / ${evidenceCases} evidence-backed`
+    : "n/a (no evidence-backed case)";
+  const selected = (entry.selected_case_ids || []).length
+    ? entry.selected_case_ids.join(", ")
+    : "—";
+  return `
+    <div class="line">${defenseStatePill(entry)}</div>
+    <div class="line">Source attacker run: <code>${esc(entry.source_run_id || "—")}</code> · candidate <code>${esc(entry.candidate_id || "—")}</code></div>
+    <div class="line">Selected saved cases: <code>${esc(selected)}</code></div>
+    <div class="line">Original target: <code>${esc(target.target_id || "no snapshot")}</code> · kind ${esc(target.kind || "—")} · available ${entry.target_available === false ? "<strong>no</strong>" : "yes"}</div>
+    <div class="line">Defense: ${esc(entry.against || "—")} · ${esc(entry.defense_implementation?.display_name || "")} (${esc(entry.defense_implementation?.implementation_type || "")})</div>
+    <div class="line">Verdict: <strong>${esc(r.verdict || "—")}</strong>${r.unavailable ? " — nothing was replayed" : ""} · ${esc(rate)}</div>
+    <div class="line">Success ${na(s.confirmed_success)} · Blocked ${na(s.confirmed_blocked)} · Inconclusive ${na(s.inconclusive)} · Technical ${na(s.technical_failure)} · replayed ${na(r.episodes_evaluated)}</div>
+    <div class="line">Ground truth: ${esc(r.ground_truth || "not_evaluated")} · saved cases available: ${na(r.source_cases_available)}</div>
+    ${episodes ? `<div class="table-scroll" style="margin-top:8px"><table class="table"><thead><tr><th>Case</th><th>State</th><th>Action</th><th>Enforced before execution</th><th>Evidence</th></tr></thead><tbody>${episodes}</tbody></table></div>` : `<div class="line">No replayed episodes.</div>`}
+    ${(r.limitations || []).map((l) => `<div class="limit">Limitation: ${esc(l)}</div>`).join("")}`;
+}
+
+function renderDefenseJob() {
+  const box = $("defenseJobStatus");
+  if (!box) return;
+  const job = state.defenseJob;
+  if (!job) {
+    box.className = "defense-result muted small";
+    box.textContent = "No defense job in this session.";
+    return;
+  }
+  const p = job.progress || {};
+  const target = job.target_identity || job.result?.replay_target || {};
+  const warnings = job.warnings || [];
+  const errors = job.errors || (job.error ? [job.error] : []);
+  box.className = "defense-result";
+  box.innerHTML = `
+    <div class="line"><span class="pill sm ${["queued", "running"].includes(job.state) ? "warn" : job.state === "technical_failure" || job.state === "interrupted" ? "bad" : "ok"}">${esc(job.state)}</span>
+      Job <code>${esc(job.job_id || job.evaluation_id)}</code> · created ${esc(timeAgo(job.created_at || job.queued_at))}</div>
+    <div class="line">Source run <code>${esc(job.source_run_id || "—")}</code> · defense ${esc(job.defense || "—")} · cases ${esc((job.case_ids || []).length || "—")}</div>
+    <div class="line">Original target: <code>${esc(target.target_id || "resolving…")}</code> · kind ${esc(target.kind || "—")}</div>
+    <div class="line">Progress: ${esc(p.phase || "queued")} · replayed ${na(p.cases_replayed)} / ${na(p.cases_total)}${p.last_case_id ? ` · last <code>${esc(p.last_case_id)}</code>` : ""}</div>
+    ${warnings.map((w) => `<div class="limit">Warning: ${esc(w)}</div>`).join("")}
+    ${errors.map((e) => `<div class="limit" style="color:#FCA5A5">Error: ${esc(e)}</div>`).join("")}
+    ${job.result ? `<hr style="border-color:var(--border-soft);margin:10px 0">${defenseEntryHtml(job.result)}` : ""}`;
+}
+
+function renderDefenses(o) {
+  const barrier = $("barrierBox");
+  if (!barrier) return;
+  const lifecycle = (o && o.lifecycle) || {};
+  const campaign = defenseCampaign();
+  if (lifecycle.running) {
+    barrier.className = "barrier blocked";
+    barrier.textContent = "An attacker search is running. Defense is a separate operation and can start only after it terminates; nothing is queued automatically.";
+  } else if (!state.defenseCampaigns.length) {
+    barrier.className = "barrier blocked";
+    barrier.textContent = "No completed attacker campaign is available. Finish an attacker run first; its saved cases will then appear here.";
+  } else if (campaign && campaign.eligible) {
+    barrier.className = "barrier ok";
+    barrier.textContent = `Campaign ${campaign.run_id} completed with ${campaign.usable_cases} eligible saved case(s). Select cases and press Run Defense — nothing starts automatically.`;
+  } else if (campaign) {
+    barrier.className = "barrier blocked";
+    barrier.textContent = `Campaign ${campaign.run_id} has no eligible saved case: ${campaign.reason || "no confirmed successful saved case"}`;
+  } else {
+    barrier.className = "barrier blocked";
+    barrier.textContent = "Select a completed attacker campaign.";
+  }
+
+  const campaignSelect = $("defenseCampaignSelect");
+  if (campaignSelect) {
+    const current = state.defenseRunId || "";
+    campaignSelect.innerHTML = state.defenseCampaigns.length
+      ? state.defenseCampaigns.map((c) =>
+          `<option value="${esc(c.run_id)}">${esc(c.run_id)} · ${esc(c.usable_cases)} eligible · ${esc(timeAgo(c.finished_at) || "—")}</option>`
+        ).join("")
+      : `<option value="">— no completed campaign —</option>`;
+    if (current && [...campaignSelect.options].some((op) => op.value === current)) {
+      campaignSelect.value = current;
+    }
+  }
+
+  const meta = $("defenseCampaignMeta");
+  if (meta) {
+    if (!campaign) {
+      meta.textContent = "No campaign selected.";
+    } else {
+      const t = campaign.target_identity || {};
+      const targetText = t.target_id
+        ? `${t.target_id} (${t.kind || "unknown kind"})`
+        : "no persisted target snapshot — replay will be unavailable";
+      meta.innerHTML = `Candidate <code>${esc(campaign.candidate_id)}</code> · search-time defense ${esc(campaign.search_defense || "—")} · original target <code>${esc(targetText)}</code> · saved cases ${na(campaign.cases_available)} · eligible ${na(campaign.usable_cases)}${campaign.target_snapshot_present === false ? " · <span style=\"color:#FDBA74\">target snapshot missing</span>" : ""}`;
+    }
+  }
+
+  const caseBox = $("defenseCaseSelect");
+  if (caseBox) {
+    const cases = campaign?.cases || [];
+    caseBox.innerHTML = cases.length
+      ? cases.map((c) => {
+          const cid = String(c.case_id || "");
+          const checked = state.defenseCaseIds.has(cid) ? "checked" : "";
+          const disabled = c.usable ? "" : "disabled";
+          return `<label class="case-choice ${c.usable ? "" : "ineligible"}">
+            <input type="checkbox" data-defense-case="${esc(cid)}" ${checked} ${disabled}>
+            <span>
+              <span class="case-id">${esc(cid || "no stable id")}</span>
+              <span class="case-meta"> · episode ${na(c.episode)} · outcome ${esc(c.outcome || "—")} · decision ${esc(c.defense_decision || "not observable")}</span>
+              ${c.usable ? "" : `<div class="case-why">Excluded: ${esc(c.unusable_reason || "not a replayable confirmed case")}</div>`}
+            </span>
+          </label>`;
+        }).join("")
+      : `<div class="muted small">${campaign ? "This campaign has no saved attack cases." : "Choose a completed campaign to list its saved cases."}</div>`;
+  }
+
+  const selectionMeta = $("defenseSelectionMeta");
+  const usable = usableCaseIds(campaign);
+  if (selectionMeta) {
+    selectionMeta.textContent = `${state.defenseCaseIds.size} selected / ${usable.length} eligible`;
+  }
+
+  const exclusions = $("defenseExclusions");
+  if (exclusions) {
+    const unusable = (campaign?.cases || []).filter((c) => !c.usable);
+    exclusions.innerHTML = unusable.length
+      ? unusable.map((c) => `Excluded <code>${esc(c.case_id || "no-id")}</code>: ${esc(c.unusable_reason || "not replayable")}`).join("<br>")
+      : "";
+  }
+
+  const defSel = $("defenseSelect");
+  if (defSel && !defSel.options.length) {
+    defSel.innerHTML = (o?.defense?.catalog || []).map((d) =>
+      `<option value="${esc(d.defense_id)}" ${d.available ? "" : "disabled"}>${esc(d.display_name)}${d.available ? "" : " — UNAVAILABLE"}</option>`
+    ).join("");
+  }
+  const runBtn = $("runDefenseBtn");
+  if (runBtn) {
+    runBtn.disabled = !campaign || !campaign.eligible || state.defenseCaseIds.size === 0;
+  }
+
+  const catalog = $("defenseCatalog");
+  if (catalog) {
+    catalog.innerHTML = (o?.defense?.catalog || []).map((d) => `
+      <div class="card defense-card">
+        <h4>${esc(d.display_name)}</h4>
+        <div class="meta">${esc(d.defense_id)} · ${esc(d.implementation_type)}${d.available ? "" : " · unavailable"}</div>
+        ${d.detects ? `<p><strong>Detects:</strong> ${esc(d.detects)}</p>` : ""}
+        ${d.blocks ? `<p><strong>Blocks:</strong> ${esc(d.blocks)}</p>` : ""}
+        <div class="limits">${esc(d.does_not || "")}</div>
+        <div class="fineprint">Upstream: ${esc(d.upstream_system || "n/a")}</div>
+      </div>`).join("");
+  }
+
+  const body = $("defenseEvalBody");
+  if (body) {
+    const evals = (o?.defense?.evaluations || []).slice().reverse();
+    body.innerHTML = evals.length
+      ? evals.map((e) => {
+          const r = e.result || {};
+          const s = r.states || {};
+          return `<tr>
+            <td><code>${esc(e.source_run_id || "—")}</code></td>
+            <td><code>${esc(e.candidate_id)}</code></td>
+            <td>${esc(e.against)}</td>
+            <td>${defenseStatePill(e)}<br><span class="muted">${esc(r.verdict || "—")}</span></td>
+            <td>${na((e.selected_case_ids || []).length || r.episodes_evaluated)}</td>
+            <td>${na(s.confirmed_success)}</td>
+            <td>${na(s.confirmed_blocked)}</td>
+            <td>${na(s.inconclusive)}</td>
+            <td>${na(s.technical_failure)}</td>
+            <td>${esc(timeAgo(e.evaluated_at))}</td>
+          </tr>`;
+        }).join("")
+      : `<tr><td colspan="10" class="empty">None yet.</td></tr>`;
+  }
+  renderPreExecution(o);
+  renderDefenseJob();
+}
+
+function renderPreExecution(o) {
+  const select = $("preExecDefenseSelect");
+  const catalog = (o?.defense?.catalog || []).filter((d) => d.available);
+  if (select && catalog.length && !select.options.length) {
+    select.innerHTML = catalog.map((d) =>
+      `<option value="${esc(d.defense_id)}">${esc(d.display_name)}</option>`).join("");
+  }
+  const campaign = defenseCampaign();
+  const btn = $("runPreExecBtn");
+  if (btn) btn.disabled = !campaign || !campaign.eligible;
+  const suites = o?.defense?.pre_execution?.suites || [];
+  const latest = suites.length ? suites[suites.length - 1] : null;
+  const metrics = $("preExecMetrics");
+  if (metrics) {
+    metrics.textContent = latest
+      ? `Suite ${latest.suite_id} · source campaign ${latest.campaign_id} · ${latest.defense} · prevention ${latest.prevention_rate == null ? "unavailable" : `${(latest.prevention_rate * 100).toFixed(0)}%`} · detection ${latest.detection_rate == null ? "unavailable" : `${(latest.detection_rate * 100).toFixed(0)}%`} · false positives ${latest.false_positive_rate == null ? "unavailable" : `${(latest.false_positive_rate * 100).toFixed(0)}%`} · executor invocations ${latest.executor_invocations_total} · original target ${esc(latest.original_target_kind)} ${latest.original_target_supports_pre_execution ? "supports pre-execution" : "unsupported for pre-execution (cooperative local replay used)"}`
+      : "No pre-execution suite persisted.";
+  }
+  const body = $("preExecBody");
+  if (body) {
+    const rows = latest ? latest.records || [] : [];
+    body.innerHTML = rows.length
+      ? rows.slice().reverse().map((r) => {
+          const action = r.proposed_action || {};
+          const args = JSON.stringify(action.arguments || {});
+          const invoked = r.executor_invoked ? `invoked (${r.executor_invocations_after})` : "not invoked";
+          return `<tr>
+            <td><code>${esc(r.execution_id)}</code></td>
+            <td>${esc(r.defense)}<br><span class="muted">${esc(r.defense_version || "")}</span></td>
+            <td><code>${esc(r.case_id)}</code></td>
+            <td><code>${esc(action.tool_name || "—")}${esc(args.slice(0, 120))}</code></td>
+            <td>${r.decision === "deny" ? '<span class="badge red">DENY</span>' : '<span class="badge green">ALLOW</span>'}</td>
+            <td>${esc(r.enforcement_boundary)}</td>
+            <td>${esc(invoked)}</td>
+            <td>${esc(r.verdict)}</td>
+            <td>${esc((r.evidence || []).join(" · ").slice(0, 220))}</td>
+          </tr>`;
+        }).join("")
+      : `<tr><td colspan="9" class="empty">No pre-execution executions yet.</td></tr>`;
+  }
+}
+
+function stopDefensePolling() {
+  clearTimeout(state.defensePollTimer);
+  state.defensePollTimer = null;
+}
+
+async function pollDefenseJob(evaluationId) {
+  stopDefensePolling();
+  const terminal = new Set(["completed", "inconclusive", "unavailable", "technical_failure", "interrupted"]);
+  for (;;) {
+    let job;
+    try {
+      const response = await api(`/api/adaptive/defense_eval/status?evaluation_id=${encodeURIComponent(evaluationId)}`);
+      job = response.job;
+    } catch (err) {
+      state.defenseJob = {
+        job_id: evaluationId,
+        evaluation_id: evaluationId,
+        state: "technical_failure",
+        errors: [err.message],
+        progress: {},
+      };
+      renderDefenseJob();
+      localStorage.removeItem(DEFENSE_JOB_KEY);
+      return;
+    }
+    state.defenseJob = job;
+    renderDefenseJob();
+    if (terminal.has(job.state)) {
+      localStorage.removeItem(DEFENSE_JOB_KEY);
+      await loadDefenseCampaigns();
+      await loadOverview();
+      return;
+    }
+    await new Promise((resolve) => {
+      state.defensePollTimer = setTimeout(resolve, 1200);
+    });
+  }
+}
+
+async function restoreDefenseJob() {
+  const evaluationId = localStorage.getItem(DEFENSE_JOB_KEY);
+  if (!evaluationId) return;
+  try {
+    const response = await api(`/api/adaptive/defense_eval/status?evaluation_id=${encodeURIComponent(evaluationId)}`);
+    state.defenseJob = response.job;
+    renderDefenseJob();
+    if (["queued", "running"].includes(response.job.state)) {
+      pollDefenseJob(evaluationId);
+    } else {
+      localStorage.removeItem(DEFENSE_JOB_KEY);
+    }
+  } catch {
+    // A restart may have removed an unknown id; never invent a result or
+    // silently start a replacement job.
+    localStorage.removeItem(DEFENSE_JOB_KEY);
+  }
+}
+
+$("defenseCampaignSelect")?.addEventListener("change", (event) => {
+  selectDefenseCampaign(event.target.value, { reset: true });
+  renderDefenses(state.overview);
+});
+
+$("defenseSelectAll")?.addEventListener("click", () => {
+  state.defenseCaseIds = new Set(usableCaseIds(defenseCampaign()));
+  renderDefenses(state.overview);
+});
+
+$("defenseClearSelection")?.addEventListener("click", () => {
+  state.defenseCaseIds = new Set();
+  renderDefenses(state.overview);
+});
+
+$("defenseCaseSelect")?.addEventListener("change", (event) => {
+  const input = event.target.closest("input[data-defense-case]");
+  if (!input) return;
+  const caseId = input.dataset.defenseCase;
+  if (input.checked) state.defenseCaseIds.add(caseId);
+  else state.defenseCaseIds.delete(caseId);
+  renderDefenses(state.overview);
+});
+
+$("runDefenseBtn")?.addEventListener("click", async () => {
+  const campaign = defenseCampaign();
+  const box = $("defenseResult");
+  if (!campaign) return;
+  const caseIds = [...state.defenseCaseIds];
+  if (!caseIds.length) {
+    box.className = "defense-result";
+    box.innerHTML = `<span style="color:#FDBA74">Select at least one eligible saved case. An empty selection never starts an evaluation.</span>`;
+    return;
+  }
+  const defense = $("defenseSelect").value;
+  box.className = "defense-result";
+  box.textContent = "Starting the separate defense job…";
+  $("runDefenseBtn").disabled = true;
+  try {
+    const start = await api("/api/adaptive/defense_eval", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        run_id: campaign.run_id,
+        candidate_id: campaign.candidate_id,
+        case_ids: caseIds,
+        defense,
+      }),
+    });
+    if (!start.evaluation_id) {
+      // Inline result (sync caller): render it directly.
+      box.innerHTML = defenseEntryHtml(start);
+      await loadOverview();
+      return;
+    }
+    state.defenseJob = start.job;
+    localStorage.setItem(DEFENSE_JOB_KEY, start.evaluation_id);
+    renderDefenseJob();
+    box.className = "defense-result muted small";
+    box.textContent = "The job runs independently in the background. Refreshing this page restores the job; it does not start another one.";
+    pollDefenseJob(start.evaluation_id);
+  } catch (err) {
+    box.className = "defense-result";
+    const data = err.data || {};
+    const excluded = (data.excluded_cases || [])
+      .map((c) => `<div class="limit">Excluded <code>${esc(c.case_id || "—")}</code>: ${esc(c.exclusion_reason || c.unusable_reason || "not eligible")}</div>`)
+      .join("");
+    box.innerHTML = `<span style="color:#FCA5A5">${esc(err.message)}</span>${excluded}`;
+    $("runDefenseBtn").disabled = false;
+  }
+});
+
+$("runPreExecBtn")?.addEventListener("click", async () => {
+  const campaign = defenseCampaign();
+  const box = $("preExecStatus");
+  if (!campaign) return;
+  const defense = $("preExecDefenseSelect").value;
+  if (!defense) return;
+  box.className = "defense-result";
+  box.textContent = `Running pre-execution check for ${defense}…`;
+  $("runPreExecBtn").disabled = true;
+  try {
+    const result = await api("/api/adaptive/defense_execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ run_id: campaign.run_id, defense }),
+    });
+    box.className = "defense-result";
+    box.innerHTML = `Suite <code>${esc(result.suite_id)}</code> completed · ${esc(result.defense)} · prevented ${esc(result.prevented)}/${esc(result.malicious_attempts)} · executor invocations ${esc(result.executor_invocations_total)}.`;
+    await loadOverview();
+  } catch (err) {
+    box.className = "defense-result";
+    box.innerHTML = `<span style="color:#FCA5A5">${esc(err.message)}</span>`;
+    $("runPreExecBtn").disabled = false;
+  }
+});
+
+/* ---------------- reports ---------------- */
+
+function renderReports(o) {
+  const body = $("runTableBody");
+  const runs = (o.reports?.runs || []).slice().reverse();
+  body.innerHTML = runs.length
+    ? runs.map((r) => `<tr>
+        <td><code>${esc(r.run_id)}</code></td>
+        <td>${statusBadge(r.status)}</td>
+        <td>${esc(r.target || "seeded stand-in")}<br><span class="muted">${esc(r.target_kind || "")}</span></td>
+        <td>${esc(r.mode || "—")}</td>
+        <td>${r.best_asr == null ? "Unavailable" : Number(r.best_asr).toFixed(2)}</td>
+        <td>${na(r.episodes_consumed)}/${na(r.total_episode_budget)}</td>
+        <td>${esc(timeAgo(r.finished_at))}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="7" class="empty">No runs persisted.</td></tr>`;  const latest = o.candidates || [];
+  const cases = latest.flatMap((c) => (c.cases || []).map((k) => ({ ...k, candidate: c.candidate_id, objective: c.objective })));
+  const runGmail = [];
+  for (const trace of (o.run?.episode_trace || [])) {
+    for (const evidence of (trace.target_evidence || [])) {
+      if (evidence && evidence.provider === "gmail") runGmail.push({ trace, evidence });
+    }
+  }
+  $("casesMeta").textContent = (cases.length || runGmail.length)
+    ? `${cases.length} case(s) from the displayed candidates · ${cases.filter((c) => c.bucket === "success").length} successful${runGmail.length ? ` · ${runGmail.length} run-level Gmail evidence record(s)` : ""}`
+    : "";
+  const gmailRows = runGmail.map(({ trace, evidence }) => {
+    const messages = (evidence.messages || []).map((m) => `${m.message_id}:${m.decision}`).join(" · ") || "no messages";
+    return `<tr>
+      <td><code>${esc(trace.case_id || "—")}</code></td>
+      <td>${esc(trace.episode)}</td>
+      <td>${bucketBadge(trace.observed_outcome === "success" ? "success" : trace.observed_outcome === "no_violation" ? "blocked" : "inconclusive")}</td>
+      <td>${esc(trace.observed_outcome || "—")}</td>
+      <td>${esc(trace.defense_decision || "not observable")}</td>
+      <td>Gmail: ${esc(messages)} · read-only · executed=false</td>
+    </tr>`;
+  }).join("");
+  $("caseTableBody").innerHTML = (cases.length || gmailRows)
+    ? cases.map((c) => {
+        const gmail = (c.target_evidence || []).find((e) => e && e.provider === "gmail");
+        const evidence = gmail
+          ? `<div class="fineprint">Gmail: ${esc((gmail.messages || []).map((m) => `${m.message_id}:${m.decision}`).join(" · ") || "no messages")} · read-only · executed=false</div>`
+          : "";
+        return `<tr>
+        <td><code>${esc(c.case_id || "—")}</code></td>
+        <td>${esc(c.episode)}</td>
+        <td>${bucketBadge(c.bucket)}</td>
+        <td>${esc(c.observed_outcome || "—")}</td>
+        <td>${esc(c.defense_decision || "not observable")}</td>
+        <td>${esc((c.steps || []).map((s) => s.category).join(", ") || "—")}${evidence}</td>
+      </tr>`;
+      }).join("") + gmailRows
+    : `<tr><td colspan="6" class="empty">No saved cases.</td></tr>`;
+
+  const evals = (o?.defense?.evaluations || []).slice().reverse();
+  const dMeta = $("defenseReportMeta");
+  if (dMeta) {
+    dMeta.textContent = evals.length
+      ? `${evals.length} defense job(s) · attacker and defense metrics are kept separate`
+      : "No defense job persisted.";
+  }
+  const dBody = $("defenseReportBody");
+  if (dBody) {
+    dBody.innerHTML = evals.length
+      ? evals.map((e) => {
+          const r = e.result || {};
+          const s = r.states || {};
+          const evidence = (s.confirmed_success || 0) + (s.confirmed_blocked || 0);
+          const rate = evidence
+            ? `${s.confirmed_blocked || 0} / ${evidence}`
+            : "n/a";
+          return `<tr>
+            <td><code>${esc(e.source_run_id || "—")}</code><br><span class="muted">${esc(e.candidate_id || "")}</span></td>
+            <td>${na((e.selected_case_ids || []).length || r.episodes_evaluated)}</td>
+            <td>${esc(e.against || "—")}</td>
+            <td>${defenseStatePill(e)}</td>
+            <td>${na(s.confirmed_success)}</td>
+            <td>${na(s.confirmed_blocked)}</td>
+            <td>${na(s.inconclusive)}</td>
+            <td>${na(s.technical_failure)}</td>
+            <td>${esc(rate)}</td>
+            <td>${esc(timeAgo(e.evaluated_at))}</td>
+          </tr>`;
+        }).join("")
+      : `<tr><td colspan="10" class="empty">No defense evaluation persisted.</td></tr>`;
+  }
+
+  $("rawRun").textContent = o.run ? JSON.stringify(o.run, null, 2) : "No run persisted.";
+}
+
+function statusBadge(status) {
+  const map = {
+    completed: ["green", "completed"],
+    budget_exhausted: ["orange", "budget exhausted"],
+    stopped: ["orange", "stopped"],
+    failed: ["red", "failed"],
+    running: ["blue", "running"],
+  };
+  const [cls, label] = map[status] || ["slate", status || "unknown"];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+$("refreshBtn").addEventListener("click", () => loadOverview());
+
+/* ---------------- settings ---------------- */
+
+function renderSettings(o) {
+  const p = o.provider || {};
+  $("settingsModel").innerHTML = [
+    ["Provider", p.provider || "—"],
+    ["Endpoint", p.endpoint || "—"],
+    ["Model", p.model || p.default_model || "—"],
+    ["Service reachable", p.reachable ? "yes" : "no"],
+    ["Model installed", p.model_available ? "yes" : "no"],
+    ["Error", p.error || "—"],
+  ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("");
+
+  const limits = o.settings?.limits || {};
+  $("settingsLimits").innerHTML = [
+    ["Episodes per candidate", limits.episodes_per_candidate],
+    ["Max rounds", limits.max_rounds],
+    ["Iterations", limits.iterations],
+    ["Total episode budget", limits.total_episode_budget],
+    ["Model requests", limits.model_requests],
+    ["Approved experiment budget", limits.approved_experiment_budget],
+  ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(na(v))}</span></div>`).join("");
+
+  const cp = o.reports?.checkpoint;
+  $("settingsCheckpoint").innerHTML = cp
+    ? Object.entries(cp).map(([k, v]) =>
+        `<div class="kv"><span>${esc(k)}</span><span>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</span></div>`).join("")
+    : `<div class="kv"><span>No checkpoint</span><span>—</span></div>`;
+
+  $("settingsConnections").innerHTML = (o.connections || []).map((c) =>
+    `<div class="kv"><span>${esc(c.display_name)}</span><span>${esc(c.connected ? (c.selected ? "connected · selected" : "connected") : c.status_label)}</span></div>`
+  ).join("");
+}
+
+/* ---------------- home ---------------- */
+
+function renderHome(o) {
+  const phase = o.lifecycle?.phase || "idle";
+  const phaseLabel = {
+    idle: "Idle",
+    attacker: "Attacker running",
+    defense_ready: "Defense ready",
+    defense_completed: "Defense evaluated",
+    defense_inconclusive: "Defense inconclusive",
+    defense_unavailable: "Defense unavailable — missing prerequisite",
+    defense_failed: "Defense technical failure",
+    defense_running: "Defense evaluation running",
+    incomplete: "Incomplete",
+  }[phase] || phase;
+  const conn = o.connection;
+  $("homeStatus").innerHTML = [
+    ["Phase", phaseLabel],
+    ["Connected agent", conn && conn.ready ? conn.display_name : "none (seeded stand-in)"],
+    ["Ollama", o.provider?.ready ? "ready" : o.provider?.reachable ? "model missing" : "unreachable"],
+    ["Runs persisted", String((o.reports?.runs || []).length)],
+    ["Defense evaluations", String((o.defense.evaluations || []).length)],
+  ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("");
+
+  const homeActivity = $("homeActivity");
+  if (homeActivity) {
+    const items = (o.activity || []).slice(0, 6);
+    homeActivity.innerHTML = items.length
+      ? items.map((a) => `<li class="act-item">
+          <span class="act-dot ${a.kind === "defense" ? "green" : a.kind === "run" ? "blue" : "purple"}"></span>
+          <div><div class="act-title">${esc(a.title)}</div><div class="act-detail">${esc(a.detail || "")}</div></div>
+          <span class="act-time">${esc(timeAgo(a.at))}</span>
+        </li>`).join("")
+      : `<li class="muted small">No persisted activity.</li>`;
+  }
+
+  const r = o.run;
+  $("homeRun").innerHTML = r
+    ? [
+        ["Run", r.run_id],
+        ["Status", r.status],
+        ["Best ASR", r.best_asr == null ? "Unavailable" : r.best_asr],
+        ["Episodes", `${na(r.episodes_consumed)}/${na(r.total_episode_budget)}`],
+        ["Finished", r.finished_at ? `${timeAgo(r.finished_at)} (${clockTime(r.finished_at)})` : "—"],
+      ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")
+    : `<span class="muted">No run recorded.</span>`;
+}
+
+/* ---------------- gmail (real read-only integration) ---------------- */
+
+function renderGmailStatus(s) {
+  const agentBox = $("agentGmailStatus");
+  if (agentBox) {
+    if (!s) {
+      agentBox.innerHTML = '<span class="dot bad"></span> Gmail status unavailable';
+    } else {
+      agentBox.innerHTML = `<span class="dot ${s.connected ? "ok" : "bad"}"></span> ${s.connected ? "Connected · read-only" : s.reauth_required ? "Re-authorization required" : "Not connected"}${s.account ? ` · ${esc(s.account)}` : ""}${s.error ? ` — ${esc(s.error)}` : ""}`;
+    }
+  }
+  const box = $("gmailStatus");
+  if (!box) return;
+  if (!s) {
+    box.className = "defense-result";
+    box.textContent = "Gmail status unavailable.";
+    return;
+  }
+  const scopes = (s.scopes || []).map((x) => `<code>${esc(x)}</code>`).join(" ") || "none";
+  box.className = "defense-result";
+  box.innerHTML = `
+    <div class="line"><span class="pill sm ${s.connected ? "ok" : "bad"}">${s.connected ? "Connected" : s.reauth_required ? "Re-authorization required" : "Not connected"}</span>
+      ${s.read_only ? " · read-only" : ""}</div>
+    <div class="line">Account: ${esc(s.account || "not reported by the token")} · token stored: ${s.token_present ? "yes" : "no"} · token expiry: ${esc(s.expiry || "—")}</div>
+    <div class="line">Scopes: ${scopes}</div>
+    ${s.error ? `<div class="limit" style="color:#FCA5A5">${esc(s.error)}</div>` : ""}
+    ${s.connected ? `<div class="line">The inbox below is fetched live from this Gmail account.</div>` : `<div class="line">Press <strong>Connect Gmail</strong> to run the OAuth consent flow in a browser window. No email is shown until a real token exists.</div>`}
+    ${s.connect_running ? `<div class="line">OAuth consent is in progress…</div>` : ""}
+    ${s.connect_error ? `<div class="limit" style="color:#FCA5A5">Connect error: ${esc(s.connect_error)}</div>` : ""}
+  `;
+}
+
+async function loadGmailStatus() {
+  try {
+    const s = await api("/api/gmail/status");
+    renderGmailStatus(s);
+    return s;
+  } catch (err) {
+    renderGmailStatus({ connected: false, read_only: true, error: err.message });
+    return null;
+  }
+}
+
+function renderGmailInbox(data) {
+  const body = $("gmailInboxBody");
+  const meta = $("gmailInboxMeta");
+  const emails = data.emails || [];
+  if (meta) {
+    meta.textContent = emails.length
+      ? `${emails.length} real message(s) from label ${data.label || "NEMESIS_DEMO"} · fetched ${clockTime(data.fetched_at)}`
+      : "No message carries the NEMESIS_DEMO label.";
+  }
+  body.innerHTML = emails.length
+    ? emails.map((e) => `<tr class="gmail-select-row" data-message-id="${esc(e.id)}" data-sender="${esc(e.sender)}" data-subject="${esc(e.subject)}" style="cursor:pointer">
+        <td><code>${esc(e.id)}</code></td>
+        <td>${esc(e.sender)}</td>
+        <td>${esc(e.subject)}</td>
+        <td>${esc(e.received_at || "—")}</td>
+        <td>${esc(e.snippet || "")}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="5" class="empty">No emails returned.</td></tr>`;
+  body.querySelectorAll("tr[data-message-id]").forEach((row) => {
+    row.addEventListener("click", () => selectGmailMessage(row));
+  });
+}
+
+function selectGmailMessage(row) {
+  const id = row.getAttribute("data-message-id") || "";
+  const subject = row.getAttribute("data-subject") || "";
+  const source = $("gmailSourceId");
+  if (source) source.value = id;
+  const subjectInput = $("gmailSubject");
+  if (subjectInput && !subjectInput.value) subjectInput.value = subject;
+  const action = $("gmailAction");
+  if (action && action.value === "compose") action.value = "reply";
+  const meta = $("gmailDraftMeta");
+  if (meta) meta.textContent = `Selected message ${id}${subject ? ` · ${subject}` : ""}`;
+  document.querySelectorAll(".gmail-select-row").forEach((r) => r.classList.remove("selected"));
+  row.classList.add("selected");
+}
+
+async function loadGmailWriteStatus() {
+  const box = $("gmailWriteStatus");
+  if (!box) return null;
+  try {
+    const s = await api("/api/gmail/write_status");
+    const tok = s.write_token_present
+      ? s.write_token_scope_valid
+        ? "present, scopes valid"
+        : "present, but scopes invalid"
+      : "missing";
+    box.className = "defense-result";
+    box.innerHTML = `
+      <div class="line"><span class="pill sm ${s.ready_to_send ? "ok" : "bad"}">${s.ready_to_send ? "Ready to send" : "Write authorization needed"}</span>
+        · write token: ${esc(tok)} · owner authorization: standing</div>
+      <div class="line">Outbound stop: ${s.kill_switch_engaged ? "ENGAGED (sends blocked)" : "released"} · allowlist: ${esc((s.allowed_recipients || []).join(", ") || (s.allowed_domains || []).join(", ") || "none")}${s.allowlist_is_default_self_only ? " (default: self only)" : ""}</div>
+      ${s.write_token_error ? `<div class="limit" style="color:#FCA5A5">Write token: ${esc(s.write_token_error)}</div>` : ""}
+      ${s.write_token_expired ? `<div class="limit">The stored write token is expired or revoked. Re-run <code>python -m gmail_live auth</code>; sending needs no further approval.</div>` : ""}
+      <div class="line">Write scopes: ${(s.write_scopes || []).map((x) => `<code>${esc(x)}</code>`).join(" ") || "none"}</div>`;
+    return s;
+  } catch (err) {
+    box.className = "defense-result";
+    box.textContent = `Write status unavailable: ${err.message}`;
+    return null;
+  }
+}
+
+async function loadGmailHistory() {
+  const body = $("gmailHistoryBody");
+  if (!body) return;
+  try {
+    const data = await api("/api/gmail/history?limit=50");
+    const items = data.history || [];
+    body.innerHTML = items.length
+      ? items.map((h) => `<tr>
+          <td>${esc(h.at || "—")}</td>
+          <td>${esc(h.type || "—")}</td>
+          <td>${esc(h.action || "—")}</td>
+          <td>${esc(h.to || "—")}</td>
+          <td>${esc(h.subject || "—")}</td>
+          <td>${esc(h.status || "—")}</td>
+          <td><code>${esc(h.message_id || "—")}</code></td>
+          <td><code>${esc(h.thread_id || "—")}</code></td>
+        </tr>`).join("")
+      : `<tr><td colspan="8" class="empty">No draft or send recorded yet.</td></tr>`;
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="8" class="empty" style="color:#FCA5A5">${esc(err.message)}</td></tr>`;
+  }
+}
+
+async function generateGmailDraft() {
+  const btn = $("gmailGenerateBtn");
+  const result = $("gmailSendResult");
+  const action = ($("gmailAction") || {}).value || "compose";
+  const recipient = ($("gmailRecipient") || {}).value || "";
+  const messageId = ($("gmailSourceId") || {}).value || "";
+  const instruction = ($("gmailInstruction") || {}).value || "";
+  if (btn) btn.disabled = true;
+  if (result) {
+    result.className = "defense-result muted small";
+    result.textContent = `Generating with local Ollama (${action})…`;
+  }
+  try {
+    const draft = await api("/api/gmail/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, recipient, instruction, message_id: messageId || null }),
+    });
+    if ($("gmailRecipient")) $("gmailRecipient").value = draft.to || "";
+    if ($("gmailSubject")) $("gmailSubject").value = draft.subject || "";
+    if ($("gmailBody")) $("gmailBody").value = draft.body || "";
+    if ($("gmailDraftMeta")) {
+      $("gmailDraftMeta").textContent = `Draft ${draft.draft_id} · ${draft.provider}/${draft.model} · context: ${draft.context_used ? "real message" : "instruction only"} · NOT SENT`;
+    }
+    if (result) {
+      result.className = "defense-result muted small";
+      result.textContent = "Draft generated. Review or edit the subject and body, then press Send via Gmail.";
+    }
+    loadGmailHistory();
+  } catch (err) {
+    if (result) {
+      result.className = "defense-result";
+      result.innerHTML = `<div class="limit" style="color:#FCA5A5">Generation failed: ${esc(err.message)}</div>`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function sendGmailDraft() {
+  const btn = $("gmailSendBtn");
+  const result = $("gmailSendResult");
+  const action = ($("gmailAction") || {}).value || "compose";
+  const to = ($("gmailRecipient") || {}).value || "";
+  const subject = ($("gmailSubject") || {}).value || "";
+  const body = ($("gmailBody") || {}).value || "";
+  if (!to || !body.trim()) {
+    if (result) result.textContent = "Recipient and body are required before sending.";
+    return;
+  }
+  if (btn) btn.disabled = true;
+  if (result) {
+    result.className = "defense-result muted small";
+    result.textContent = "Calling the Gmail API…";
+  }
+  try {
+    const data = await api("/api/gmail/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        to,
+        subject,
+        body,
+        source_message_id: ($("gmailSourceId") || {}).value || null,
+      }),
+    });
+    if (result) {
+      result.className = "defense-result";
+      result.innerHTML = data.sent
+        ? `<div class="line"><span class="pill sm ok">Sent</span> Gmail confirmed message <code>${esc(data.message_id || "—")}</code> · thread <code>${esc(data.thread_id || "—")}</code></div>`
+        : `<div class="line"><span class="pill sm bad">Not sent</span> ${esc(data.reason || data.status || "Gmail did not confirm the send")}</div>`;
+    }
+    loadGmailHistory();
+    loadGmailWriteStatus();
+  } catch (err) {
+    if (result) {
+      result.className = "defense-result";
+      result.innerHTML = `<div class="limit" style="color:#FCA5A5">Send failed: ${esc(err.message)}</div>`;
+    }
+    loadGmailHistory();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function toggleGmailSend(engage) {
+  try {
+    await api("/api/gmail/kill_switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ engage }),
+    });
+    toast(engage ? "Outbound stop engaged." : "Outbound stop released; Gmail sends are allowed.");
+    loadGmailWriteStatus();
+  } catch (err) {
+    toast(`Could not change outbound stop: ${err.message}`, true);
+  }
+}
+
+function gmailError(err) {
+  const body = $("gmailInboxBody");
+  const meta = $("gmailInboxMeta");
+  if (meta) meta.textContent = "";
+  if (body) {
+    body.innerHTML = `<tr><td colspan="5" class="empty" style="color:#FCA5A5">${esc(err.message)}</td></tr>`;
+  }
+  // Re-read the authoritative status instead of inventing a partial one:
+  // the first render already shows the real token presence/scopes/expiry.
+  loadGmailStatus();
+}
+
+async function loadGmailInbox() {
+  const btn = $("gmailLoadBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api("/api/gmail/inbox?max_results=25");
+    renderGmailInbox(data);
+  } catch (err) {
+    gmailError(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function analyzeGmail() {
+  const box = $("gmailAnalysis");
+  const btn = $("gmailAnalyzeBtn");
+  if (box) {
+    box.className = "defense-result";
+    box.textContent = "Fetching real messages and running the local analysis engine…";
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api("/api/gmail/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_results: 5 }),
+    });
+    if (box) {
+      box.innerHTML = `<div class="line">Analyzed ${na(data.email_count)} real message(s).</div>
+        <pre class="code-block" style="max-height:420px;overflow:auto">${esc(JSON.stringify(data.analysis, null, 2))}</pre>`;
+    }
+  } catch (err) {
+    if (box) {
+      box.innerHTML = `<div class="limit" style="color:#FCA5A5">${esc(err.message)}</div>`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+$("gmailRefreshBtn")?.addEventListener("click", () => loadGmailStatus());
+$("agentGmailRefreshBtn")?.addEventListener("click", () => loadGmailStatus());
+$("agentGmailConnectBtn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/gmail/connect", { method: "POST" });
+    toast(res.message || "OAuth consent started.");
+    setTimeout(loadGmailStatus, 1500);
+  } catch (err) {
+    toast(`Could not start Gmail consent: ${err.message}`, true);
+  }
+});
+$("gmailLoadBtn")?.addEventListener("click", loadGmailInbox);
+$("gmailAnalyzeBtn")?.addEventListener("click", analyzeGmail);
+$("gmailWriteRefreshBtn")?.addEventListener("click", () => loadGmailWriteStatus());
+$("gmailStopSendBtn")?.addEventListener("click", async () => {
+  const s = await loadGmailWriteStatus();
+  toggleGmailSend(!(s && s.kill_switch_engaged));
+});
+$("gmailGenerateBtn")?.addEventListener("click", generateGmailDraft);
+$("gmailSendBtn")?.addEventListener("click", sendGmailDraft);
+loadGmailWriteStatus();
+loadGmailHistory();
+
+/* ---------------- init ---------------- */
+
+window.addEventListener("resize", () => {
+  if (state.page === "experiments") drawChart();
+});
+
+setPage("experiments");
+loadOverview();

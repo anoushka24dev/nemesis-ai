@@ -8,7 +8,7 @@ each call; a controller drives the loop with cryptographic stop-condition checks
 
 ## Stack (do not change without asking)
 - Python 3.10+
-- Frontend: none yet (CLI + stub pipelines)
+- Frontend: static dashboard served by `frontend/server.py` (stdlib HTTP server, no framework)
 - Database: Postgres (planned for tenant-scoped data + auth)
 - ORM: SQLAlchemy 2.0
 - Auth: Auth.js + session model

@@ -1,0 +1,1 @@
+{"status": "ok", "service": "Nemesis HTTP BYOA Target", "endpoint": "/execute", "supported_method": "POST", "port": 11643, "execution_ready": true, "detail": "target module loaded"}

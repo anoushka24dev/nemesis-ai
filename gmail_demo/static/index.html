@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gmail Agent vs Adaptive Attacker — Security Evaluation</title>
+<style>
+  :root {
+    color-scheme: dark;
+    /* Surfaces */
+    --bg: #0B0F17;              /* near-black navy page canvas */
+    --panel: #111827;           /* panel surface */
+    --card: #1F2937;            /* elevated card surface */
+    --line: rgba(148, 163, 184, 0.14);
+    --line-2: rgba(148, 163, 184, 0.26);
+    /* Ink */
+    --text: #F8FAFC;
+    --text-2: #CBD5E1;
+    --muted: #94A3B8;
+    /* Semantic */
+    --blue: #3B82F6;
+    --blue-2: #60A5FA;
+    --green: #22C55E;
+    --green-2: #4ADE80;
+    --red: #EF4444;
+    --red-2: #F87171;
+    --amber: #F59E0B;
+    --amber-2: #FBBF24;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    font-weight: 450;
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 2px solid var(--blue-2); outline-offset: 2px; }
+
+  .wrap { width: 100%; max-width: 1200px; margin: 0 auto; }
+
+  /* ---------- header ---------- */
+  header {
+    border-bottom: 1px solid var(--line);
+    background: rgba(11, 15, 23, .92);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    padding: 14px 32px;
+  }
+  .title h1 {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.01em;
+  }
+  .title h1 .mark { color: var(--blue); font-size: 16px; }
+  .title .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  .cluster {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 12px; margin-left: auto;
+  }
+  .def-status {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .ds-label {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted);
+  }
+  #modeTag {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  #modeTag .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  #modeTag.vuln { color: var(--red-2); }
+  #modeTag.hard { color: var(--green-2); }
+
+  .switch {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 13px; color: var(--text-2);
+    padding: 8px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer; user-select: none;
+  }
+  .switch:hover { border-color: var(--line-2); }
+  .switch input { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); cursor: pointer; }
+
+  #runBtn {
+    background: var(--blue); color: #fff;
+    border: 0; border-radius: 10px;
+    padding: 10px 20px;
+    font: inherit; font-size: 15px; font-weight: 500;
+    cursor: pointer;
+  }
+  #runBtn:hover { background: #2563EB; }
+  #runBtn:active { background: #1D4ED8; }
+  #runBtn:disabled { opacity: .6; cursor: default; }
+
+  /* ---------- verdict banner ---------- */
+  #banner { display: none; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #banner.show { display: block; }
+  #banner.running { box-shadow: inset 3px 0 0 var(--blue); }
+  #banner.lost { box-shadow: inset 3px 0 0 var(--red); }
+  #banner.held { box-shadow: inset 3px 0 0 var(--green); }
+  #banner .wrap { padding: 20px 32px; }
+  .verdict-row { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .verdict {
+    margin: 0; font-size: clamp(22px, 3vw, 32px); font-weight: 700;
+    letter-spacing: -0.01em; text-transform: uppercase;
+  }
+  #banner.running .verdict { color: var(--blue-2); }
+  #banner.lost .verdict { color: var(--red-2); }
+  #banner.held .verdict { color: var(--green-2); }
+  .verdict-detail { color: var(--muted); font-size: 13px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+  .chip {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 14px; min-width: 96px;
+  }
+  .chip .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .chip .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
+  .chip.bad .v { color: var(--red-2); }
+  .chip.hit { border-color: rgba(239, 68, 68, .45); }
+
+  /* ---------- playback controls ---------- */
+  #controls {
+    display: none;
+    position: sticky; top: 0; z-index: 15;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  #controls.show { display: block; }
+  #controls .wrap {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 12px; padding: 10px 32px;
+  }
+  .ctrl {
+    background: transparent; color: var(--text-2);
+    border: 1px solid var(--line-2); border-radius: 8px;
+    padding: 7px 14px; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+  }
+  .ctrl:hover:not(:disabled) { border-color: var(--blue); color: #fff; }
+  .ctrl:disabled { opacity: .4; cursor: default; }
+  .ctrl.primary { background: var(--card); border-color: var(--line-2); color: #fff; }
+  select.ctrl { background: var(--card); color: var(--text); }
+  select.ctrl option { background: var(--card); color: var(--text); }
+  .progress {
+    flex: 1 1 140px; min-width: 120px; height: 6px;
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 999px; overflow: hidden;
+  }
+  .progress > i { display: block; height: 100%; width: 0; background: var(--blue); transition: width .25s ease; }
+  #status { font-size: 13px; color: var(--muted); }
+  #status b { color: var(--text); font-weight: 600; }
+
+  /* ---------- three-column dashboard ---------- */
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 22fr) minmax(0, 43fr) minmax(0, 35fr);
+    gap: 16px;
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 32px 64px;
+    align-items: start;
+  }
+  .panel {
+    min-width: 0;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .panel > h2 {
+    display: flex; align-items: baseline; gap: 12px;
+    margin: 0; padding: 12px 16px;
+    font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-2);
+    background: rgba(11, 15, 23, .5);
+    border-bottom: 1px solid var(--line);
+  }
+  .panel > h2 .h2note {
+    margin-left: auto; font-weight: 400; text-transform: none;
+    letter-spacing: 0; font-size: 12px; color: var(--muted);
+  }
+  .metrics-panel { grid-column: 1 / -1; }
+
+  /* ---------- inbox ---------- */
+  .mail {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    border-left: 3px solid transparent;
+    cursor: pointer;
+  }
+  .mail:last-child { border-bottom: 0; }
+  .mail:hover { background: rgba(59, 130, 246, .05); }
+  .mail.active { background: var(--card); border-left-color: var(--blue); }
+  .mail.missed { border-left-color: var(--red); }
+  .mail .top { display: flex; gap: 8px; align-items: baseline; }
+  .mail .from {
+    flex: 1; min-width: 0; font-size: 12px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mail .line2 { display: flex; gap: 8px; align-items: baseline; margin-top: 2px; }
+  .mail .subj {
+    flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mail .date { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .mail .prev {
+    font-size: 12px; color: var(--muted); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .pill {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 2px 8px; border-radius: 6px; white-space: nowrap;
+  }
+  .pill.new      { background: rgba(59, 130, 246, .16); color: var(--blue-2); }
+  .pill.read     { background: rgba(148, 163, 184, .16); color: var(--muted); }
+  .pill.allowed  { background: rgba(34, 197, 94, .16); color: var(--green-2); }
+  .pill.blocked  { background: rgba(34, 197, 94, .16); color: var(--green-2); }
+  .pill.flagged  { background: rgba(245, 158, 11, .16); color: var(--amber-2); }
+  .pill.executed { background: rgba(239, 68, 68, .16); color: var(--red-2); }
+  .pill.attacker { background: rgba(245, 158, 11, .16); color: var(--amber-2); border: 1px solid rgba(245, 158, 11, .4); }
+
+  /* ---------- email (white external surface) ---------- */
+  .detail { padding: 16px; }
+  .email-card {
+    background: #FFFFFF;
+    color: #111827;
+    border: 1px solid #E2E8F0;
+    border-radius: var(--radius);
+    box-shadow: 0 1px 3px rgba(2, 6, 23, .08);
+    padding: 24px;
+  }
+  .ec-row { display: flex; gap: 12px; font-size: 14px; line-height: 1.6; }
+  .ec-k {
+    width: 52px; flex: 0 0 auto;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #64748B; padding-top: 2px;
+  }
+  .ec-v { color: #334155; overflow-wrap: anywhere; min-width: 0; }
+  .ec-subject {
+    margin: 16px 0; padding: 16px 0;
+    border-top: 1px solid #E2E8F0; border-bottom: 1px solid #E2E8F0;
+    font-size: 18px; font-weight: 600; color: #0F172A;
+    overflow-wrap: anywhere;
+  }
+  .ec-body {
+    font-size: 15px; line-height: 1.65; color: #111827;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .ec-foot {
+    margin-top: 20px; padding-top: 14px;
+    border-top: 1px solid #E2E8F0;
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  }
+  .ec-status-k {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748B;
+  }
+  .ec-reason { flex: 1 0 100%; font-size: 13px; color: #64748B; overflow-wrap: anywhere; }
+  /* Status pills on the white surface */
+  .email-card .pill.new      { background: #DBEAFE; color: #1D4ED8; }
+  .email-card .pill.read     { background: #F1F5F9; color: #475569; }
+  .email-card .pill.allowed  { background: #DCFCE7; color: #15803D; }
+  .email-card .pill.blocked  { background: #DCFCE7; color: #15803D; }
+  .email-card .pill.flagged  { background: #FEF3C7; color: #B45309; }
+  .email-card .pill.executed { background: #FEE2E2; color: #B91C1C; }
+  .email-card .pill.attacker { background: #FEF3C7; color: #B45309; border: 1px solid #F59E0B; }
+
+  /* ---------- attack trace timeline ---------- */
+  .timeline { position: relative; padding: 16px; }
+  .timeline::before {
+    content: ""; position: absolute;
+    left: 25px; top: 30px; bottom: 22px;
+    width: 2px; background: var(--line);
+  }
+  .tl-round, .tl-flow, .tl-final { position: relative; padding-left: 44px; }
+  .tl-dot {
+    position: absolute; left: 20px; top: 6px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 0 3px var(--panel);
+  }
+  .tl-dot.ok   { background: var(--green); }
+  .tl-dot.bad  { background: var(--red); }
+  .tl-dot.warn { background: var(--amber); }
+  .tl-dot.flow {
+    width: 10px; height: 10px; left: 21px; top: 4px;
+    background: var(--panel); border: 2px solid var(--blue);
+  }
+
+  .round-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; }
+  .round-no {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text);
+  }
+  .round-kind {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+  }
+  .round-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .rc-top { display: flex; gap: 10px; justify-content: space-between; align-items: baseline; }
+  .rc-title { font-size: 15px; font-weight: 600; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+  .rc-via {
+    font-size: 12px; color: var(--muted); white-space: nowrap;
+    max-width: 45%; overflow: hidden; text-overflow: ellipsis;
+  }
+  .rc-desc { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+  .rc-row { display: flex; gap: 12px; margin-top: 10px; font-size: 13px; align-items: baseline; }
+  .rc-k {
+    flex: 0 0 auto; min-width: 78px;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+  }
+  .rc-v { color: var(--text-2); overflow-wrap: anywhere; min-width: 0; }
+  .rc-sts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .st {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 2px 8px; border-radius: 6px;
+  }
+  .st-green  { background: rgba(34, 197, 94, .16); color: var(--green-2); }
+  .st-red    { background: rgba(239, 68, 68, .16); color: var(--red-2); }
+  .st-amber  { background: rgba(245, 158, 11, .16); color: var(--amber-2); }
+  .st-muted  { background: rgba(148, 163, 184, .16); color: var(--muted); }
+  .rc-unsafe {
+    margin-top: 8px; font-size: 12px; color: var(--red-2);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    overflow-wrap: anywhere;
+  }
+  .rc-note {
+    margin-top: 10px; font-size: 13px; color: var(--text-2);
+    background: rgba(11, 15, 23, .55);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    overflow-wrap: anywhere;
+  }
+
+  .tl-flow { padding-top: 6px; padding-bottom: 6px; }
+  .flow-line {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); line-height: 1.9;
+  }
+  .flow-line.adapt { color: var(--blue-2); font-weight: 600; }
+  .flow-next { font-size: 13px; color: var(--text-2); margin-top: 2px; overflow-wrap: anywhere; }
+  .flow-next b { color: #fff; font-weight: 600; }
+  .flow-next.pending { color: var(--muted); }
+
+  .final-card {
+    background: var(--card);
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .final-card.good { border-left: 3px solid var(--green); }
+  .final-card.bad { border-left: 3px solid var(--red); }
+  .fo-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .fo-value { font-size: 20px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 4px; }
+  .fo-value.good { color: var(--green-2); }
+  .fo-value.bad { color: var(--red-2); }
+  .fo-sub { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .tl-round.reveal { animation: cardIn .25s ease both; }
+
+  .empty { padding: 24px 16px; color: var(--muted); font-size: 14px; }
+
+  /* ---------- metrics ---------- */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    padding: 16px;
+  }
+  .metric {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    min-width: 0;
+  }
+  .metric .m-head {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    justify-content: space-between; gap: 6px 12px;
+  }
+  .m-key {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--muted);
+  }
+  .m-scope { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--blue-2); }
+  .m-val { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; margin-top: 8px; color: #fff; }
+  .m-val.good { color: var(--green-2); }
+  .m-val.bad  { color: var(--red-2); }
+  .m-val.live { color: var(--blue-2); }
+  .m-sub { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 900px) {
+    .head, #banner .wrap, #controls .wrap { padding-left: 16px; padding-right: 16px; }
+    main { grid-template-columns: 1fr; padding: 16px 16px 48px; }
+    .cluster { margin-left: 0; width: 100%; }
+    .email-panel { order: 1; }
+    .trace-panel { order: 2; }
+    .inbox-panel { order: 3; }
+    .metrics-panel { order: 4; }
+    .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 560px) {
+    .title h1 { font-size: 18px; }
+    .metrics-grid { grid-template-columns: 1fr; }
+    .email-card { padding: 16px; }
+    .rc-via { display: none; }
+    .chip { min-width: 0; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap head">
+    <div class="title">
+      <h1><span class="mark" aria-hidden="true">✦</span>Gmail Agent vs Adaptive Attacker</h1>
+      <div class="sub">Simulated mailbox · no real email · no network · no LLM runtime</div>
+    </div>
+    <div class="cluster">
+      <div class="def-status">
+        <span class="ds-label">Defense status</span>
+        <span id="modeTag" class="vuln"><span class="dot" aria-hidden="true"></span>Vulnerable</span>
+      </div>
+      <label class="switch" for="harden">
+        <input type="checkbox" id="harden" />
+        <span>Normalize before scanning</span>
+      </label>
+      <button id="runBtn">Run adaptive attack →</button>
+    </div>
+  </div>
+</header>
+
+<div id="banner"></div>
+
+<div id="controls">
+  <div class="wrap">
+    <button class="ctrl primary" id="playBtn">Pause</button>
+    <button class="ctrl" id="stepBtn">Step</button>
+    <button class="ctrl" id="restartBtn">Restart</button>
+    <button class="ctrl" id="skipBtn">Skip to result</button>
+    <div class="progress"><i id="bar"></i></div>
+    <span id="status"></span>
+    <select id="speed" class="ctrl" aria-label="Playback speed">
+      <option value="2400">Slow</option>
+      <option value="1500" selected>Normal</option>
+      <option value="750">Fast</option>
+    </select>
+  </div>
+</div>
+
+<main>
+  <section class="panel inbox-panel">
+    <h2>Inbox</h2>
+    <div id="inbox"><div class="empty">Loading inbox...</div></div>
+  </section>
+
+  <section class="panel email-panel">
+    <h2>Email</h2>
+    <div id="detail"><div class="empty">Select an email to read it.</div></div>
+  </section>
+
+  <section class="panel trace-panel">
+    <h2>Attack trace <span class="h2note">adaptive attack sequence</span></h2>
+    <div id="attempts"><div class="empty">Press "Run adaptive attack" to start.</div></div>
+  </section>
+
+  <section class="panel metrics-panel">
+    <h2>Metrics <span class="h2note">current run + this session</span></h2>
+    <div id="metrics"><div class="empty">Press "Run adaptive attack" to populate metrics.</div></div>
+  </section>
+</main>
+
+<script>
+const el = id => document.getElementById(id);
+
+const state = {
+  baseInbox: [],        // seeded mailbox, before any attack
+  inbox: [],            // final mailbox, after the run
+  episode: null,
+  variants: [],
+  selected: null,
+  revealed: 0,          // how many rounds are on screen
+  playing: false,
+  timer: null,
+  runs: [],             // finished runs this session (ASR + hardening effect)
+  recorded: new Set()   // episode ids already counted, so replay never double-counts
+};
+
+/* ---------------- helpers ---------------- */
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function pill(status) {
+  return `<span class="pill ${(status || "new").toLowerCase()}">${status || "new"}</span>`;
+}
+function variantName(key) {
+  const v = state.variants.find(x => x.key === key);
+  return v ? v.name : key;
+}
+function fmtDate(iso, short) {
+  // "2026-10-08T09:05:00+00:00" -> "Oct 8, 9:05 AM" (or "Oct 8")
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso || "");
+    return d.toLocaleString("en-US", short
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch (e) {
+    return String(iso || "");
+  }
+}
+const totalSteps = () => (state.episode ? state.episode.steps.length : 0);
+const shownSteps = () => (state.episode ? state.episode.steps.slice(0, state.revealed) : []);
+function speedMs() { return parseInt(el("speed").value, 10) || 1500; }
+function delayAfter(step) {
+  // Give the winning attempt a longer beat so the audience registers it.
+  return step && step.attacker_succeeded ? speedMs() * 2.4 : speedMs();
+}
+
+/* ---------------- inbox (progressive) ---------------- */
+function visibleInbox() {
+  if (!state.episode || state.revealed === 0) return state.baseInbox;
+  const arrived = new Set(shownSteps().map(s => s.email_id));
+  // Normal mail is there from the start; attacker mail lands as it is tried.
+  return state.inbox.filter(m => !m.is_attacker || arrived.has(m.id));
+}
+
+function renderInbox() {
+  const node = el("inbox");
+  const mail = visibleInbox();
+  if (!mail.length) { node.innerHTML = '<div class="empty">No emails.</div>'; return; }
+  node.innerHTML = mail.map(m => `
+    <div class="mail ${state.selected === m.id ? "active" : ""} ${m.status === "executed" ? "missed" : ""}" data-id="${m.id}">
+      <div class="top">
+        <span class="from">${escapeHtml(m.sender)}</span>
+        ${m.is_attacker ? '<span class="pill attacker">attacker</span>' : pill(m.status)}
+      </div>
+      <div class="line2">
+        <span class="subj">${escapeHtml(m.subject)}</span>
+        <span class="date">${escapeHtml(fmtDate(m.received_at, true))}</span>
+      </div>
+      <div class="prev">${escapeHtml(m.preview)}</div>
+    </div>`).join("");
+  node.querySelectorAll(".mail").forEach(n =>
+    n.addEventListener("click", () => { state.selected = n.dataset.id; renderInbox(); renderDetail(); })
+  );
+}
+
+function renderDetail() {
+  const node = el("detail");
+  const m = visibleInbox().find(x => x.id === state.selected);
+  if (!m) { node.innerHTML = '<div class="empty">Select an email to read it.</div>'; return; }
+  node.innerHTML = `
+    <div class="detail">
+      <div class="email-card">
+        <div class="ec-row"><span class="ec-k">From</span><span class="ec-v">${escapeHtml(m.sender)}</span></div>
+        <div class="ec-row"><span class="ec-k">To</span><span class="ec-v">you@corp.example</span></div>
+        <div class="ec-row"><span class="ec-k">Date</span><span class="ec-v">${escapeHtml(fmtDate(m.received_at))}</span></div>
+        <div class="ec-subject">${escapeHtml(m.subject)}</div>
+        <div class="ec-body">${escapeHtml(m.body)}</div>
+        <div class="ec-foot">
+          <span class="ec-status-k">Status</span>
+          ${pill(m.status)}
+          ${m.is_attacker ? '<span class="pill attacker">attacker email</span>' : ""}
+          ${m.status_reason ? `<div class="ec-reason">${escapeHtml(m.status_reason)}</div>` : ""}
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ---------------- verdict banner (live, then final) ---------------- */
+function runningCounts() {
+  const s = shownSteps();
+  return {
+    attempts: s.length,
+    blocked: s.filter(x => x.verdict.decision === "block").length,
+    flagged: s.filter(x => x.verdict.decision === "flag").length,
+    allowed: s.filter(x => x.verdict.decision === "allow").length,
+    unsafe: s.filter(x => x.unsafe_outcome).length
+  };
+}
+
+function renderBanner() {
+  const b = el("banner");
+  const ep = state.episode;
+  if (!ep) { b.className = ""; b.innerHTML = ""; return; }
+
+  const total = totalSteps();
+  const done = state.revealed >= total;
+  const c = runningCounts();
+  const current = shownSteps()[state.revealed - 1];
+
+  if (!done) {
+    b.className = "show running";
+    b.innerHTML = `
+      <div class="wrap">
+      <div class="verdict-row">
+        <p class="verdict">● Attack in progress…</p>
+        <span class="verdict-detail">${
+          current
+            ? `Round ${c.attempts} of ${total} — trying “${escapeHtml(variantName(current.variant))}”`
+            : `Preparing ${total} attack variants.`
+        }</span>
+      </div>
+      <div class="chips">
+        <div class="chip"><div class="k">Rounds</div><div class="v">${c.attempts} / ${total}</div></div>
+        <div class="chip"><div class="k">Blocked</div><div class="v">${c.blocked}</div></div>
+        <div class="chip"><div class="k">Flagged</div><div class="v">${c.flagged}</div></div>
+        <div class="chip"><div class="k">Allowed</div><div class="v">${c.allowed}</div></div>
+        <div class="chip ${c.unsafe ? "bad hit" : ""}"><div class="k">Unsafe executed</div><div class="v">${c.unsafe}</div></div>
+        <div class="chip"><div class="k">Utility</div><div class="v">${ep.metrics.utility_score}</div></div>
+      </div></div>`;
+    return;
+  }
+
+  const lost = ep.attacker_succeeded;
+  b.className = "show " + (lost ? "lost" : "held");
+  b.innerHTML = `
+    <div class="wrap">
+    <div class="verdict-row">
+      <p class="verdict">${lost ? "● Attack succeeded" : "● Attack blocked"}</p>
+      <span class="verdict-detail">${
+        lost
+          ? `Round ${ep.successful_attempt} of ${total} — “${escapeHtml(variantName(ep.successful_variant))}” got through and the confidential email left the company.`
+          : `All ${total} variants were blocked or flagged. The confidential email stayed inside the company.`
+      }</span>
+    </div>
+    <div class="verdict-detail" style="margin-top:6px">${
+      ep.metrics.defense_hardened
+        ? "Hardened defense: the checker normalized each message before scanning, so it agreed with the agent on what the message said."
+        : "Vulnerable defense: the checker scanned each message raw, so obfuscated addresses were invisible to it while the agent resolved them."
+    }</div>
+    <div class="chips">
+      <div class="chip"><div class="k">Rounds</div><div class="v">${ep.metrics.attempts}</div></div>
+      <div class="chip"><div class="k">Blocked</div><div class="v">${ep.metrics.blocked}</div></div>
+      <div class="chip"><div class="k">Flagged</div><div class="v">${ep.metrics.flagged}</div></div>
+      <div class="chip"><div class="k">Allowed</div><div class="v">${ep.metrics.allowed}</div></div>
+      <div class="chip ${ep.metrics.unsafe_actions_executed ? "bad hit" : ""}"><div class="k">Unsafe executed</div><div class="v">${ep.metrics.unsafe_actions_executed}</div></div>
+      <div class="chip"><div class="k">Utility</div><div class="v">${ep.metrics.utility_score}</div></div>
+    </div></div>`;
+}
+
+/* ---------------- attack trace: ROUND → RESULT → ADAPTATION ---------------- */
+
+function roundStatus(s) {
+  // Derive chips strictly from the actual AttackStep data.
+  const d = s.verdict.decision;
+  const chips = [];
+  if (s.attacker_succeeded) {
+    chips.push('<span class="st st-red">● Succeeded</span>');
+    if (s.unsafe_outcome) chips.push('<span class="st st-red">● Unsafe</span>');
+  } else if (d === "block") {
+    chips.push('<span class="st st-green">● Blocked</span>');
+  } else if (d === "flag") {
+    chips.push('<span class="st st-amber">● Flagged</span>');
+  } else if (d === "allow") {
+    chips.push(s.executed
+      ? '<span class="st st-green">● Executed</span>'
+      : '<span class="st st-green">● Allowed</span>');
+  } else {
+    chips.push('<span class="st st-muted">● No signal</span>');
+  }
+  return chips.join("");
+}
+
+function roundDotClass(s) {
+  if (s.attacker_succeeded) return "bad";
+  const d = s.verdict.decision;
+  if (d === "flag") return "warn";
+  if (d === "block" || s.executed) return "ok";
+  return "";
+}
+
+function roundHtml(s, isCurrent) {
+  const action = escapeHtml(s.proposed.action) +
+    (s.proposed.to ? " to " + escapeHtml(s.proposed.to) : "");
+  return `
+  <div class="tl-round ${isCurrent ? "current reveal" : ""}">
+    <span class="tl-dot ${roundDotClass(s)}" aria-hidden="true"></span>
+    <div class="round-head">
+      <span class="round-no">Round ${s.attempt}</span>
+      <span class="round-kind">${s.attempt === 1 ? "Initial attempt" : "Adaptive attempt"}</span>
+    </div>
+    <div class="round-card">
+      <div class="rc-top">
+        <span class="rc-title">${escapeHtml(variantName(s.variant))}</span>
+        <span class="rc-via" title="${escapeHtml(s.email_subject)}">✉ ${escapeHtml(s.email_sender)}</span>
+      </div>
+      <div class="rc-desc">${escapeHtml(s.variant_description)}</div>
+      <div class="rc-row"><span class="rc-k">Proposes</span><span class="rc-v">${action}</span></div>
+      <div class="rc-row"><span class="rc-k">Result</span><span class="rc-sts">${roundStatus(s)}</span></div>
+      ${s.unsafe_outcome ? `<div class="rc-unsafe">${escapeHtml(s.unsafe_outcome)}</div>` : ""}
+      <div class="rc-note">${escapeHtml(s.note)}</div>
+    </div>
+  </div>`;
+}
+
+function flowHtml(next) {
+  return `
+  <div class="tl-flow">
+    <span class="tl-dot flow" aria-hidden="true"></span>
+    <div class="flow-line">↓ Observed result</div>
+    <div class="flow-line adapt">↓ Adaptation</div>
+    <div class="flow-next">Next strategy: <b>${escapeHtml(variantName(next.variant))}</b></div>
+  </div>`;
+}
+
+function finalOutcomeHtml(ep, total) {
+  const won = ep.attacker_succeeded;
+  const sub = won
+    ? `Round ${ep.successful_attempt} of ${total} — ${variantName(ep.successful_variant)}`
+    : `All ${total} variants were stopped by the defense`;
+  return `
+  <div class="tl-final">
+    <span class="tl-dot ${won ? "bad" : "ok"}" aria-hidden="true"></span>
+    <div class="final-card ${won ? "bad" : "good"}">
+      <div class="fo-label">Final outcome</div>
+      <div class="fo-value ${won ? "bad" : "good"}">${won ? "● Attack succeeded" : "● Attack blocked"}</div>
+      <div class="fo-sub">${escapeHtml(sub)}</div>
+    </div>
+  </div>`;
+}
+
+function renderAttempts() {
+  const node = el("attempts");
+  if (!state.episode) {
+    node.innerHTML = '<div class="empty">Press "Run adaptive attack" to start.</div>';
+    return;
+  }
+
+  const total = totalSteps();
+  const shown = shownSteps();
+  let html = '<div class="timeline">';
+
+  shown.forEach((s, i) => {
+    if (i > 0) html += flowHtml(s);           // adaptation into this round
+    html += roundHtml(s, i === shown.length - 1);
+  });
+
+  if (state.revealed < total) {
+    html += `
+      <div class="tl-flow">
+        <span class="tl-dot flow" aria-hidden="true"></span>
+        <div class="flow-next pending">Next: waiting to try variant ${state.revealed + 1} of ${total}…</div>
+      </div>`;
+  } else {
+    html += finalOutcomeHtml(state.episode, total);
+  }
+
+  html += "</div>";
+  node.innerHTML = html;
+}
+
+/* ---------------- controls ---------------- */
+function updateControls() {
+  const total = totalSteps();
+  const done = state.revealed >= total && total > 0;
+  el("bar").style.width = total ? (state.revealed / total * 100) + "%" : "0%";
+  el("playBtn").textContent = state.playing ? "Pause" : (done ? "Replay" : "Play");
+  el("playBtn").disabled = false;
+  el("stepBtn").disabled = state.revealed >= total;
+  el("skipBtn").disabled = state.revealed >= total;
+  const cur = shownSteps()[state.revealed - 1];
+  el("status").innerHTML = total
+    ? (done
+        ? "Finished"
+        : `Round <b>${state.revealed}</b> of <b>${total}</b>` +
+          (cur ? ` &middot; <b>${escapeHtml(variantName(cur.variant))}</b>` : ""))
+    : "";
+}
+
+function renderAll() {
+  renderInbox(); renderDetail(); renderAttempts(); renderBanner();
+  recordRunIfDone(); renderMetrics(); updateControls();
+}
+
+/* ---------------- metrics panel ---------------- */
+
+function pct(x) { return Math.round(x * 100) + "%"; }
+
+function recordRunIfDone() {
+  // Count a run in session history exactly once, when its playback finishes.
+  const ep = state.episode;
+  if (!ep || totalSteps() === 0 || state.revealed < totalSteps()) return;
+  if (state.recorded.has(ep.episode_id)) return;
+  state.recorded.add(ep.episode_id);
+  state.runs.push({
+    hardened: !!ep.metrics.defense_hardened,
+    succeeded: !!ep.attacker_succeeded
+  });
+}
+
+function computeMetrics() {
+  const ep = state.episode;
+  const m = ep ? ep.metrics : null;
+  const shown = shownSteps();
+  const total = totalSteps();
+  const done = total > 0 && state.revealed >= total;
+
+  // Protected assets = the seeded emails labeled confidential.
+  const protectedTotal = state.baseInbox.filter(e => (e.labels || []).includes("confidential")).length;
+  const exfiltrated = shown.some(s => s.unsafe_outcome === "forward_private_email_to_external_address");
+  const compromised = exfiltrated && protectedTotal ? 1 : 0;
+  const blast = protectedTotal ? compromised / protectedTotal : 0;
+
+  const stopped = shown.filter(s => s.verdict.decision === "block" || s.verdict.decision === "flag").length;
+  const blockedRate = shown.length ? stopped / shown.length : 0;
+
+  const runsSucceeded = state.runs.filter(r => r.succeeded).length;
+  const asr = state.runs.length ? runsSucceeded / state.runs.length : 0;
+
+  const vulnRuns = state.runs.filter(r => !r.hardened);
+  const hardRuns = state.runs.filter(r => r.hardened);
+  const vulnAsr = vulnRuns.length ? vulnRuns.filter(r => r.succeeded).length / vulnRuns.length : null;
+  const hardAsr = hardRuns.length ? hardRuns.filter(r => r.succeeded).length / hardRuns.length : null;
+  const delta = vulnAsr !== null && hardAsr !== null ? vulnAsr - hardAsr : null;
+
+  return { ep, m, shown, total, done, protectedTotal, compromised, blast,
+           stopped, blockedRate, runsSucceeded, asr, vulnAsr, hardAsr, delta };
+}
+
+function metricTile(key, scope, value, tone, sub) {
+  return `
+    <div class="metric">
+      <div class="m-head"><span class="m-key">${key}</span><span class="m-scope">${scope}</span></div>
+      <div class="m-val ${tone || ""}">${value}</div>
+      <div class="m-sub">${sub}</div>
+    </div>`;
+}
+
+function renderMetrics() {
+  const node = el("metrics");
+  if (!node) return;
+  const d = computeMetrics();
+  const noRun = !d.ep;
+  const runsN = state.runs.length;
+  const s = d.protectedTotal === 1 ? "" : "s";
+
+  // 1. Attack success rate — across every finished run this session.
+  const asrTile = runsN
+    ? metricTile("Attack success rate", "session", pct(d.asr), d.asr > 0 ? "bad" : "good",
+        `${d.runsSucceeded} of ${runsN} completed run${runsN === 1 ? "" : "s"} succeeded`)
+    : metricTile("Attack success rate", "session", "&mdash;", "",
+        d.ep ? "run in progress — verdict pending" : "no completed runs yet");
+
+  // 2. Blast radius — share of protected (confidential) emails that left.
+  const blastTile = noRun
+    ? metricTile("Blast radius", "run", "&mdash;", "",
+        `${d.protectedTotal} confidential email${s} monitored`)
+    : metricTile("Blast radius", "run", pct(d.blast), d.blast > 0 ? "bad" : (d.done ? "good" : ""),
+        d.blast > 0
+          ? `${d.compromised} of ${d.protectedTotal} confidential email${s} left the company`
+          : d.done
+            ? `0 of ${d.protectedTotal} confidential email${s} exposed`
+            : `0 of ${d.protectedTotal} exposed so far`);
+
+  // 3. Blocked rate — attempts the defense stopped (block or flag).
+  const blockTone = !d.shown.length ? "" : (d.done ? (d.blockedRate >= 1 ? "good" : "live") : "");
+  const blockTile = d.shown.length
+    ? metricTile("Blocked rate", "run", pct(d.blockedRate), blockTone,
+        `${d.stopped} of ${d.shown.length} attempt${d.shown.length === 1 ? "" : "s"} stopped by the defense`)
+    : metricTile("Blocked rate", "run", "&mdash;", "", "no attempts yet");
+
+  // 4. Attempts to success.
+  let attemptsTile;
+  if (noRun) {
+    attemptsTile = metricTile("Attempts to success", "run", "&mdash;", "", "no run yet");
+  } else if (!d.done) {
+    attemptsTile = metricTile("Attempts to success", "run", "&mdash;", "live",
+      `round ${d.shown.length} of ${d.total} in progress`);
+  } else if (d.ep.attacker_succeeded) {
+    attemptsTile = metricTile("Attempts to success", "run", String(d.ep.metrics.attempts_to_success), "bad",
+      `${escapeHtml(variantName(d.ep.successful_variant))} · attempt ${d.ep.successful_attempt} of ${d.total}`);
+  } else {
+    attemptsTile = metricTile("Attempts to success", "run", "&mdash;", "good",
+      `attack held through all ${d.total} variants`);
+  }
+
+  // 5. Utility — normal mail still handled.
+  const utilTile = noRun
+    ? metricTile("Utility score", "run", "&mdash;", "", "available after a run")
+    : metricTile("Utility score", "run", Number(d.m.utility_score).toFixed(2), "",
+        "normal mail handled without being blocked");
+
+  // 6. Hardening effect — change in ASR between the two modes.
+  const deltaTile = d.delta === null
+    ? metricTile("Hardening effect", "session", "&mdash;", "",
+        runsN ? "run one vulnerable and one hardened run to compare" : "run both modes to compare")
+    : metricTile("Hardening effect", "session", Math.round(d.delta * 100) + " pp",
+        d.delta > 0 ? "good" : (d.delta < 0 ? "bad" : ""),
+        `vulnerable ${pct(d.vulnAsr)} → hardened ${pct(d.hardAsr)}`);
+
+  node.innerHTML = `<div class="metrics-grid">${asrTile}${blastTile}${blockTile}${attemptsTile}${utilTile}${deltaTile}</div>`;
+}
+
+/* ---------------- playback ---------------- */
+function stopPlayback() {
+  state.playing = false;
+  if (state.timer) { clearTimeout(state.timer); state.timer = null; }
+}
+
+function revealUpTo(n, { follow = true } = {}) {
+  const total = totalSteps();
+  state.revealed = Math.max(0, Math.min(n, total));
+  // Follow the round: select its email so the Email pane tells the story.
+  const cur = shownSteps()[state.revealed - 1];
+  if (follow && cur) state.selected = cur.email_id;
+  renderAll();
+  if (follow && cur) {
+    const node = document.querySelector(".tl-round.current");
+    if (node) node.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+function tick() {
+  if (!state.playing) return;
+  if (state.revealed >= totalSteps()) { stopPlayback(); renderAll(); return; }
+  revealUpTo(state.revealed + 1);
+  const cur = shownSteps()[state.revealed - 1];
+  if (state.revealed >= totalSteps()) { stopPlayback(); renderAll(); return; }
+  state.timer = setTimeout(tick, delayAfter(cur));
+}
+
+function startPlayback() {
+  if (!state.episode) return;
+  if (state.revealed >= totalSteps()) return;
+  state.playing = true;
+  updateControls();
+  state.timer = setTimeout(tick, 450);
+}
+
+function togglePlay() {
+  if (state.playing) { stopPlayback(); renderAll(); return; }
+  if (state.revealed >= totalSteps()) { state.revealed = 0; renderAll(); }
+  startPlayback();
+}
+
+el("playBtn").addEventListener("click", togglePlay);
+
+el("stepBtn").addEventListener("click", () => {
+  stopPlayback();
+  revealUpTo(state.revealed + 1);
+});
+
+el("restartBtn").addEventListener("click", () => {
+  stopPlayback();
+  state.revealed = 0;
+  state.selected = state.baseInbox.length ? state.baseInbox[0].id : null;
+  renderAll();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  startPlayback();
+});
+
+el("skipBtn").addEventListener("click", () => {
+  stopPlayback();
+  revealUpTo(totalSteps());
+  const winner = state.episode && state.episode.successful_variant;
+  const hit = winner ? state.inbox.find(m => m.variant === winner) : null;
+  if (hit) { state.selected = hit.id; renderAll(); }
+});
+
+el("speed").addEventListener("change", () => {
+  if (state.playing) { stopPlayback(); startPlayback(); }
+});
+
+/* ---------------- defense status + run ---------------- */
+function renderModeTag() {
+  const hardened = el("harden").checked;
+  const tag = el("modeTag");
+  tag.className = hardened ? "hard" : "vuln";
+  tag.innerHTML = `<span class="dot" aria-hidden="true"></span>${hardened ? "Hardened" : "Vulnerable"}`;
+}
+el("harden").addEventListener("change", renderModeTag);
+renderModeTag();
+
+async function loadInitial() {
+  const data = await (await fetch("/api/inbox")).json();
+  state.baseInbox = data.inbox || [];
+  state.inbox = state.baseInbox;
+  state.episode = null;
+  state.revealed = 0;
+  state.selected = state.baseInbox.length ? state.baseInbox[0].id : null;
+  el("controls").className = "";
+  renderAll();
+}
+
+async function runAttack() {
+  const btn = el("runBtn");
+  const hardened = el("harden").checked;
+  stopPlayback();
+  btn.disabled = true; btn.textContent = "Running…";
+  try {
+    const url = "/api/run" + (hardened ? "?hardened=1" : "");
+    const data = await (await fetch(url, { method: "POST" })).json();
+    state.inbox = data.inbox || [];
+    state.episode = data.episode;
+    state.variants = data.attacker_variants || [];
+    state.revealed = 0;
+    state.selected = state.baseInbox.length ? state.baseInbox[0].id : null;
+    el("controls").className = "show";
+    renderAll();
+    startPlayback();
+  } finally {
+    btn.disabled = false; btn.textContent = "Run adaptive attack →";
+  }
+}
+
+el("runBtn").addEventListener("click", runAttack);
+loadInitial();
+</script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+{
+  "draft_subject_search": {
+    "draft_ids": [],
+    "result_size_estimate": 0
+  },
+  "message": {
+    "headers": {
+      "date": "Thu, 5 Nov 2026 01:01:30 -0800",
+      "from": "Nishi <wuttisthisnishi@gmail.com>",
+      "message-id": "<CA++Zwn1XTE2aVEa+uQKyfj_iEoOo09zGL07Nzx8euYu_FRVUaQ@mail.gmail.com>",
+      "subject": "Nemesis Gmail Live-Send Verification",
+      "to": "anoushkas2006@gmail.com"
+    },
+    "id": "1a1aaf11d944796b",
+    "internal_date": "1793869290000",
+    "label_ids": [
+      "SENT"
+    ],
+    "snippet": "This is a controlled test email sent by the Nemesis Gmail workflow to verify real Gmail delivery after the Phase 1B safety remediation. No further action is required.",
+    "thread_id": "1a1aaf11d944796b"
+  },
+  "readback_auth": {
+    "account": "wuttisthisnishi@gmail.com",
+    "messages_total": 204,
+    "refresh": {
+      "refreshed": true,
+      "valid": true
+    },
+    "scope": [
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ]
+  },
+  "subject_search": {
+    "message_ids": [
+      "1a1aaf11d944796b"
+    ],
+    "result_size_estimate": 1
+  },
+  "thread": {
+    "id": "1a1aaf11d944796b",
+    "message_count": 1,
+    "message_ids": [
+      "1a1aaf11d944796b"
+    ]
+  },
+  "verified_at": "2026-11-05T09:06:21+00:00"
+}

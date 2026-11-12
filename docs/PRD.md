@@ -1,15 +1,22 @@
 # Product Requirements Document (PRD)
 
-> **Project:** Adaptive AI Agent Defense Evaluation Framework
-> **Version:** 1.0.0
-> **Last Updated:** 2026-09-16
-> **Status:** Active
+> **Project:** Adaptive AI Agent Defense Evaluation Framework (Nemesis)
+> **Version:** 2.0.0
+> **Last Updated:** 2026-10-25
+> **Status:** Active — aligned with the agreed product vision
 
 ---
 
 ## Table of Contents
 
 1. [Problem Statement & Goals](#1-problem-statement--goals)
+   - [1.6 Product Vision & the Two Experiences](#16-product-vision--the-two-experiences)
+   - [1.7 Target Connections — Two Supported Methods](#17-target-connections--two-supported-methods)
+   - [1.8 Three Security Objectives](#18-three-security-objectives)
+   - [1.9 Outcome Classes & Evidence Requirements](#19-outcome-classes--evidence-requirements)
+   - [1.10 Intended Experiment Workflow](#110-intended-experiment-workflow)
+   - [1.11 Safe Initial Defaults](#111-safe-initial-defaults)
+   - [1.12 Intended AI Analyses](#112-intended-ai-analyses)
 2. [Baseline Experiment Requirements](#2-baseline-experiment-requirements)
 3. [Cross-Agent Propagation Requirements](#3-cross-agent-propagation-requirements)
 4. [Defense Composition Requirements](#4-defense-composition-requirements)
@@ -64,6 +71,248 @@ Most defenses today are validated against **static attacks** (fixed injection st
 | Researchers & Security Teams | Evaluate defense robustness | Publishable evidence on defense effectiveness |
 | AI Agent Developers | Understand behavior under adaptive attacks | Design better defenses |
 | Academic Community | Publish findings on deterministic defenses | New knowledge on agent security |
+
+### 1.6 Product Vision & the Two Experiences
+
+Nemesis is an adaptive AI-agent security testing and research platform. A
+user should eventually be able to **connect their own agent, run adaptive
+red-team experiments, evaluate defenses, inspect evidence and metrics, and
+obtain an evidence-grounded analysis.** Two distinct experiences deliver
+that vision; they are documented separately and must not be conflated:
+
+**A. Nemesis Research Dashboard** — the primary product experience:
+
+| Capability | Meaning | Status |
+|------------|---------|--------|
+| Target connection setup | Connect a user's own agent; run a real connectivity check before any experiment | **Implemented for HTTP API** (`ExternalHttpTargetAdapter` + a bounded probe), served by `/api/connections` and `/api/adaptive/validate` (§1.7). Framework integration is **not implemented**; the Local Python Agent method is **retired** |
+| Experiment configuration & execution | Select objectives, target, model/provider, defense, search algorithm, episode budget; bounded execution | **Partial** — configuration and bounded execution exist for the deterministic runner ([EXPERIMENT_RUNNER.md](EXPERIMENT_RUNNER.md)); the dashboard (`frontend/`) covers configure → validate → run → defense evaluation |
+| Adaptive attack search | Greedy hill climbing **and** feedback-guided search as separately selectable strategies | **Implemented** — `backend/adaptive_harness.py` ([ADAPTIVE_SEARCH.md](ADAPTIVE_SEARCH.md)) |
+| Defense selection & evaluation | Separate evaluation of the connected agent under selected protective controls | **Partial** — defense layer exists ([ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md) ADR-003) and the separate defense-evaluation phase of §6 is implemented (`backend/defense_eval.py`, `/api/adaptive/defense_eval`, ADR-020); upstream research systems are **not** reproduced (local proxies only) |
+| Metrics, comparisons, AI-assisted analysis, reproducible artifacts | Evidence-grounded metrics and analysis over persisted artifacts | **Partial** — metrics and artifact integrity exist ([METRICS_DEFINITIONS.md](METRICS_DEFINITIONS.md), [CONTRACTS.md](CONTRACTS.md)); AI analysis over persisted evidence is **planned** |
+
+**B. Nemesis Gmail Security Side Panel** — a separate, **read-only** Gmail
+security experience (Chrome extension + local backend): per-email threat
+verdicts, read-only OAuth (`gmail.readonly`, fail-closed on anything
+broader), pairing/nonce/origin-pinned local serving. The side panel's
+analysis path performs no send/delete/modify/label/move operations; a
+*separate* owner-armed email write workflow exists in `email_workflow/`
+(consent env + separate write credentials + allowlists + rate limit,
+simulation by default, fail-closed) and is documented in
+[AUTONOMOUS_EMAIL.md](AUTONOMOUS_EMAIL.md) — it is not part of the side panel
+experience and is not enabled by default. The side panel is **not** a
+target-connection method for the research dashboard: it analyzes a real
+mailbox under a fixed read-only scope, whereas the dashboard connects a user
+agent over HTTP. Constraints are unchanged and non-negotiable — see
+`README_stageb.md`, [THREAT_CLASSIFICATION.md](THREAT_CLASSIFICATION.md),
+and [SECURITY_HARDENING.md](SECURITY_HARDENING.md).
+
+### 1.7 Target Connections — Two Supported Methods
+
+Bring-your-own-agent connectivity is a **product requirement**. The dashboard
+exposes exactly two connection methods; their real status is:
+
+| Dashboard method | Implementation | Status |
+|---|---|---|
+| **HTTP API** | `adaptive_agent_eval/target/adapter.py::ExternalHttpTargetAdapter`; validated with `backend/connections.py::probe_http_endpoint` | **Implemented** — one bounded POST probe, JSON response required |
+| **Agent Framework** | `adaptive_agent_eval/target/langchain_agent.py::LangChainAgentAdapter` — a real `langchain.agents.create_agent` ReAct agent over `ChatOllama` (default `llama3.1:8b`), probed with `backend/connections.py::probe_langchain_agent` and executed by the adaptive harness as the run target | **Implemented** — readiness and run execution both invoke the real model; a model error surfaces as a technical failure |
+
+**Local Python Agent — retired.** The in-process adapter path was removed from
+the supported product: there is no connection card, no adapter-module or
+entry-callable field, no setup template, no execution branch, and no active
+connection type. `backend/connections.py` still recognises the identifier only
+to reject legacy callers with an explicit `retired` error, and
+`/api/adaptive/run` / `/api/adaptive/validate` reject inline adapter specs with
+HTTP 400. The `adaptive_agent_eval/target/byoa.py` module remains in the tree
+because it backs the labelled offline fixture target
+(`local-byoa-fixture`) used for deterministic development runs; it is not a
+user-facing connection method. See ADR-021.
+
+A saved connection is never treated as ready: `/api/connections` records the
+probe result, and the adaptive harness only receives the target when that
+probe succeeded. No method silently falls back to a fixture when it fails.
+The three **agent-shape categories** the product must support (independent of
+the connection methods above):
+
+| # | Category | Description | Instrumentation intent |
+|---|----------|-------------|------------------------|
+| 1 | **Single-turn text-in/text-out agents** | One prompt in, one completion out | HTTP JSON request/response over a documented contract |
+| 2 | **Multi-turn conversational / stateful agents** | Dialogue history and state across turns | Stronger turn-level instrumentation (bounded context, per-turn evidence) |
+| 3 | **Tool-using agents** | Agents that call APIs, databases, files, or other tools | Instrumented tool boundaries so access/transmission/disclosure are observable |
+
+Delivery order: (a) the documented **HTTP endpoint contract** first;
+(b) then stronger multi-turn and tool instrumentation; (c) later,
+framework-specific adapters. Step (a) has shipped. Framework-specific
+adapters have **not** shipped and are labelled unavailable everywhere they
+appear.
+
+#### 1.7.1 Execution lifecycle (enforced by the backend)
+
+One experiment runs in strict order, and the API enforces the barrier rather
+than relying on disabled buttons:
+
+1. **Attacker** — candidates are evaluated against the connected target (or
+the explicitly-labelled seeded stand-in when no connection is active) and
+persisted with stable `case_id`s (`<strategy>:ep<N>`).
+2. **Completion barrier** — defense evaluation is refused with HTTP 409 while
+any attacker search is running, and when the source run is not `completed`
+(`stopped`, `budget_exhausted`, `failed`).
+3. **Defense replay** — the selected defense replays the saved finding's
+ladder and seed, links each replayed episode to its source `case_id`, and
+classifies it as `confirmed_success`, `confirmed_blocked`, `inconclusive` or
+`technical_failure`.
+4. **Report** — the dashboard shows both phases, their denominators, source
+run/case identifiers and the honest limitations (including when the replay
+environment differs from the source run's target).
+
+### 1.8 Three Security Objectives
+
+These objectives are distinct and are kept separate in all architecture,
+threat-model, and metrics documentation. Both the attack phase and the
+defense phase evaluate against them:
+
+1. **Unauthorized data access** — did the agent access or retrieve information beyond its permissions?
+2. **Sensitive-data exfiltration** — did sensitive information reach an unauthorized destination?
+3. **Sensitive-data disclosure** — did the agent reveal sensitive information to an unauthorized recipient?
+
+**Success is defined by the applicable authorization policy.** Legitimate
+access is not automatically a security violation; an access that the policy
+permits is not a success for objective 1. Outcome classification therefore
+requires stated policy context, synthetic records, secret canaries,
+instrumented boundaries, and evidence-based classification (§1.9). If a
+relevant boundary cannot be observed, the result is reported as a limitation
+— never as "no violation occurred".
+
+### 1.9 Outcome Classes & Evidence Requirements
+
+Every episode outcome is reported in exactly one of four classes:
+
+| Class | Meaning |
+|-------|---------|
+| **Confirmed success** | Evidence shows the security objective was violated under the authorization policy |
+| **Confirmed blocked** | Evidence shows the violation was prevented |
+| **Inconclusive** | Available evidence cannot decide (unobservable boundary, missing signal, insufficient data) |
+| **Technical failure** | The episode did not run to a decidable outcome (harness/target/infrastructure error) |
+
+Existing record vocabularies map onto these classes rather than being
+replaced: `AttackOutcome` (`success`/`blocked`/`ignored`/`technical_fail`)
+and `GroundTruthOutcome` (six values incl. `indeterminate`) in
+`adaptive_agent_eval/models.py`; the reporting-layer mapping is documented in
+[CONTRACTS.md §4](CONTRACTS.md). Technical failures are never reported as
+blocks, and inconclusive results are never reported as successes or blocks —
+including in AI-generated analysis (§1.12).
+
+Evidence requirements (product requirements):
+
+- **Synthetic records** for data the agent may read — no real personal or production data by default.
+- **Secret canaries** — planted sensitive values whose appearance at a boundary proves (or disproves) exfiltration/disclosure.
+- **Instrumented boundaries** — every tool call, network egress, and recipient address the policy governs must be observable to classify outcomes.
+- **Evidence-based classification** — each outcome carries the records that support it; an unobservable boundary yields `inconclusive` plus an explicit limitation note.
+
+### 1.10 Intended Experiment Workflow
+
+The intended end-to-end product workflow (some steps exist today, some are
+requirements):
+
+1. User connects an HTTP target and runs a **connectivity check**. *(implemented: `probe_http_endpoint`, exposed via `/api/connections` and `/api/adaptive/validate`)*
+2. User selects security objectives, target, model/provider, defense configuration, search algorithm, and episode budget. *(configuration exists at CLI/backend level)*
+3. The adaptive attacker executes bounded episodes and uses previous outcomes to select subsequent candidates — greedy or feedback-guided, selected explicitly ([ADAPTIVE_SEARCH.md](ADAPTIVE_SEARCH.md)). *(implemented for deterministic local simulation)*
+4. Nemesis records evidence, outcomes, supported metrics, and experiment artifacts. *(implemented: JSON persistence + artifact hashes, [CONTRACTS.md](CONTRACTS.md))*
+5. An **AI attack analysis** summarizes persisted evidence without inventing results. *(planned)*
+6. User reviews the attack report and initiates a **separate defense evaluation**. *(implemented: eligibility-gated defense phase over a completed attacker run; see §6 below)*
+7. The defense evaluation measures security outcomes and utility trade-offs. *(replay verdicts implemented: four-state classification with denial-evidence requirements; false-positive and legitimate-task utility measurement for the defense phase is still planned)*
+8. A **separate defense analysis** reports which controls worked, which failed, and where evidence is incomplete. *(planned)*
+**Episode budget:** **1,000 episodes is a desired supported experiment
+budget**, not a claim that the system has run or can safely run that many
+today. The approved manifest is 26 configurations / 1,300 episodes
+([CONTRACTS.md §7](CONTRACTS.md), ADR-016/017) and full-matrix execution is
+refused by the current runner pending a separately approved procedure. The
+eventual runner must enforce hard limits, timeouts, checkpointing, safe
+resume, and provider cost limits. Large runs require **explicit user
+initiation and a successful small smoke test first** — mirroring the existing
+runner's non-executing-by-default and bounded-execution rules
+([EXPERIMENT_RUNNER.md](EXPERIMENT_RUNNER.md)).
+
+### 1.11 Safe Initial Defaults
+
+Every experiment starts from these defaults; loosening any of them requires
+explicit user approval:
+
+- Synthetic data and synthetic secret canaries.
+- No real production credentials by default.
+- Mocked or sandboxed tool actions.
+- External network access disabled by default.
+- Bounded execution and episode budgets.
+- Sensitive-value redaction where practical.
+- Explicit approval before experiments involving real services or data.
+- No automatic side-effecting retries (retries only for read-only/idempotent operations; failed episodes start a new run).
+- Missing metrics represented as **unavailable** (`null` / `not_measured`), never zero.
+- No frontend mock data presented as real experiment results.
+
+Several of these are already enforced by the Phase 3 runner
+([EXPERIMENT_RUNNER.md](EXPERIMENT_RUNNER.md) "Safety invariants") and the
+Gmail read-only contract; the rest are product requirements for the
+dashboard.
+
+### 1.12 Intended AI Analyses
+
+Two separate AI-assisted analyses, both **grounded in recorded experiment
+nevidence**:
+
+- **Attacker analysis:** explains observed attack outcomes, strategy progression, evidence, uncertainty, supported metrics, and promising follow-up tests.
+- **Defense analysis:** explains which attacks were blocked, which controls failed, whether data access or transmission occurred *before* a block, utility impact, observability limitations, and recommended improvements.
+
+Hard constraints for both: AI-generated interpretations must not override
+measured outcomes, must not convert inconclusive results into confirmed
+successes or blocks, and must not invent results that are not present in
+persisted artifacts. An analysis over no evidence says so.
+
+### 1.13 Intended Defense Architecture (defense evaluation phase)
+
+The defense phase is a **separate evaluation of the connected agent under
+selected protective controls** — not a continuation of the attacker's search.
+Its intended responsibilities:
+
+| | Responsibility |
+|---|----------------|
+| A | Enforce authorization at relevant data-access and tool boundaries |
+| B | Protect sensitive information from unauthorized access, transmission, and disclosure |
+| C | Inspect and validate tool calls where the integration allows it |
+| D | Detect and record suspicious behavior and policy violations **with evidence** |
+| E | Use observed attack findings to guide defense evaluation and follow-up tests — while keeping **attacker search feedback separate** from defense decisions and from post-run AI analysis |
+
+**Roles of existing defenses (as implemented — simplified proxies, not
+faithful reproductions):** `adaptive_agent_eval/defense/defenses.py` contains
+`CamelDefense` (literal pattern/taint heuristics over tool arguments),
+`ProgentDefense` (static privilege-level table plus argument checks — **no
+SMT solver**), and `VerifierDefense` (schema-required-field checks plus a
+keyword-overlap intent match). `backend/adaptive_harness.py` adds
+`MarkerDefense` (a CaMeL-style literal-taint stand-in, the harness default)
+and `VerifierDefenseShim` (wraps the real `VerifierDefense`). Each record
+naming a defense must state which implementation ran
+(`DefenseImplementation` in `adaptive_agent_eval/models.py`). **No defense
+can enforce every boundary**: e.g. the marker defense cannot see encoded
+payloads, the verifier cannot see anything its schema does not model, and
+none of them observe network egress. Do not claim a defense covers a boundary
+its implementation cannot instrument.
+
+**Defense evaluation (implemented — replay and verdict scope):**
+`defense_evaluation` in `backend/adaptive_harness.py` (endpoint
+`/api/adaptive/defense_eval`, ADR-020) starts only from a **completed**
+attacker run, replays the stored finding against a selected defense on the
+same target, attack category and seed, and classifies every replayed episode
+into exactly one of `confirmed_success`, `confirmed_blocked`, `inconclusive`,
+`technical_failure` (`backend/defense_eval.py`) — a block without defense
+denial evidence is never confirmed, and ground truth is reported as
+`not_evaluated` rather than manufactured. Each result labels the actual
+implementation (local proxy vs unavailable). **Still planned:** systematic
+defense-setting comparison, false-positive and legitimate-task utility
+measurement *within this phase*, and evaluation against the
+`detected_not_blocked` distinction in
+`GroundTruthOutcome` ([CONTRACTS.md §4](CONTRACTS.md)).
+
+Attacker search feedback (greedy or feedback-guided, [ADAPTIVE_SEARCH.md](ADAPTIVE_SEARCH.md)),
+defense decisions, and post-run AI analysis remain three separate channels;
+none may write into another's state.
 
 ---
 
@@ -401,6 +650,17 @@ Agent D ─── Agent E
 ---
 
 ## 10. Experimental Configurations
+
+> **Scope note (2026-10-25).** The matrices in this section are the **original
+> research design** (38 configurations / 1,900 episodes) and are preserved as
+> historical planning decisions. The currently **approved, validated**
+> experiment manifest is **26 configurations / 1,300 episodes** — see
+> [CONTRACTS.md §7](CONTRACTS.md) and ADR-016/017 in
+> [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md). Full-matrix
+> execution is refused by today's runner pending a separately approved
+> procedure. The product's *desired supported* experiment budget is 1,000
+> episodes (§1.10) — a target for the eventual runner, not a current
+> capability claim.
 
 ### 10.1 Grand Total
 

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nemesis - Autonomous Email Agent</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="hero">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <div class="brand-text">
+            <h1>NEMESIS</h1>
+            <p class="brand-sub">Autonomous Email Agent</p>
+          </div>
+        </div>
+        <p class="hero-copy">
+          One run exercises the whole agent: architecture sources, defense
+          verdict, strategy hill climb, the regression gate, and the authorized
+          sandbox email action.
+        </p>
+        <div class="status-strip">
+          <span id="pill-backend" class="pill">
+            <span class="dot" aria-hidden="true"></span>
+            <span id="pill-backend-text">Connecting</span>
+          </span>
+          <span id="pill-pairing" class="pill muted">Unpaired</span>
+          <span id="pill-mode" class="pill muted">Mode: --</span>
+        </div>
+        <p id="conn-banner" class="banner" role="alert" hidden></p>
+        <div class="pairing">
+          <label class="pairing-label" for="nonce">Backend pairing nonce</label>
+          <div class="pairing-row">
+            <input
+              id="nonce"
+              type="password"
+              placeholder="nonce from the backend terminal"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="pair-btn" class="btn" type="button">Pair</button>
+          </div>
+          <p id="pair-status" class="micro" aria-live="polite">
+            Not paired with the local backend.
+          </p>
+        </div>
+      </header>
+
+      <main>
+        <section class="card run-card" id="run-card">
+          <div class="card-head">
+            <h2>Autonomous demo</h2>
+            <span id="run-state-badge" class="badge idle">IDLE</span>
+          </div>
+          <p class="card-copy">
+            Nemesis reads the project's architecture and strategy documents,
+            evaluates the demo attack against the active defense, climbs the
+            strategy ladder with the real evaluation harness, applies the
+            regression gate, then executes the configured sandbox email action.
+            Every stage below reports the backend's actual result. The mode pill
+            shows the backend's real policy mode (SIMULATION or LIVE); this panel
+            never upgrades that label.
+          </p>
+          <div class="run-actions">
+            <button id="demo-run-btn" class="btn primary" type="button" disabled>
+              Start Nemesis Demo
+            </button>
+            <button id="demo-stop-btn" class="btn ghost" type="button" hidden>
+              Stop
+            </button>
+          </div>
+          <p id="run-status-line" class="status" aria-live="polite">
+            Checking the local backend...
+          </p>
+          <p id="run-blocker" class="micro warn" hidden></p>
+        </section>
+
+        <section class="card" id="timeline-card">
+          <div class="card-head">
+            <h2>Execution timeline</h2>
+            <span id="timeline-state" class="chip">waiting</span>
+          </div>
+          <ol id="stage-list" class="timeline"></ol>
+          <p id="timeline-note" class="micro">
+            Stages advance only from the backend run state; nothing here is a
+            decorative animation.
+          </p>
+        </section>
+
+        <section class="card climber" id="hillclimb-card">
+          <div class="card-head">
+            <h2>Hill Climbing Strategy Engine</h2>
+            <span id="climber-state" class="chip">no run yet</span>
+          </div>
+          <p class="card-copy">
+            Baseline and candidate strategies are scored by the real adaptive
+            harness. A candidate is retained only when the regression gate
+            passes; otherwise the baseline stays active and the reason is shown.
+          </p>
+          <p class="micro">
+            Harness: Adaptive Strategy Engine (adaptive_agent_eval controller,
+            defense adapter, diagnoser, memory, metrics).
+          </p>
+
+          <h3>Architecture sources read</h3>
+          <ul id="doc-list" class="doc-list">
+            <li class="empty">Documents appear here after a run.</li>
+          </ul>
+
+          <h3>Baseline vs candidate</h3>
+          <div class="compare" id="compare">
+            <div class="compare-col">
+              <span class="compare-k">Baseline</span>
+              <strong id="cmp-base-asr">--</strong>
+              <span class="compare-sub">strategy ASR</span>
+            </div>
+            <div class="compare-col candidate">
+              <span class="compare-k">Candidate</span>
+              <strong id="cmp-cand-asr">--</strong>
+              <span class="compare-sub">strategy ASR</span>
+            </div>
+            <div class="compare-delta" id="cmp-delta">--</div>
+          </div>
+
+          <div id="metric-grid" class="metrics"></div>
+
+          <div id="adaptive-engine-box" hidden>
+            <h3>Active strategy</h3>
+            <div id="adaptive-engine" class="metrics"></div>
+          </div>
+
+          <h3>Candidate evaluations</h3>
+          <div id="adaptive-loops-box">
+            <div id="adaptive-loops" class="loops">
+              <p class="empty">No candidate evaluations yet.</p>
+            </div>
+          </div>
+
+          <h3>Retain / reject decision</h3>
+          <div id="adaptive-activity-box">
+            <div id="adaptive-activity" class="decision">
+              <p class="empty">The regression gate result appears after a run.</p>
+            </div>
+          </div>
+          <p id="adaptive-status-line" class="status" aria-live="polite" hidden></p>
+        </section>
+
+        <section class="card result-card" id="results-card">
+          <div class="card-head">
+            <h2>Final result</h2>
+            <span id="result-badge" class="badge idle">PENDING</span>
+          </div>
+          <div id="result-body" class="result-body">
+            <p class="empty">
+              Run the demo to see the threat verdict, strategy outcome, and the
+              email execution status.
+            </p>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <button id="killswitch-btn" class="btn ghost danger" type="button" disabled>
+          Engage kill switch
+        </button>
+        <button id="reset-btn" class="btn ghost" type="button" disabled>
+          Unpair
+        </button>
+        <p id="footer-status" class="micro" aria-live="polite"></p>
+      </footer>
+    </div>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
