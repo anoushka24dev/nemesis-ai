@@ -2,61 +2,59 @@
   "version": 1,
   "active": "gmail",
   "connections": {
-    "agent_framework": {
-      "model": "llama3.1:8b",
-      "base_url": "http://127.0.0.1:11434",
-      "target_id": "langchain-agent",
-      "timeout_seconds": 30.0,
-      "method": "agent_framework",
-      "connected_at": "2026-11-11T08:29:30Z",
-      "last_validation": {
-        "ok": true,
-        "checked_at": "2026-11-11T08:29:30Z",
-        "error": null,
-        "error_category": null,
-        "status_code": null,
-        "detail": {
-          "elapsed_seconds": 19.762,
-          "output_preview": "{\"name\": \"connection established\", \"parameters\": {\"status\": \"online\"}}"
-        }
-      }
-    },
     "http_api": {
       "endpoint_url": "http://127.0.0.1:11643/execute",
       "target_id": "http-byoa-live",
       "timeout_seconds": 15.0,
       "method": "http_api",
-      "connected_at": "2026-11-12T05:08:05Z",
+      "connected_at": "2026-11-13T05:58:37Z",
       "last_validation": {
-        "ok": true,
-        "checked_at": "2026-11-12T05:08:05Z",
-        "error": null,
-        "error_category": null,
-        "status_code": 200,
-        "detail": {
-          "elapsed_seconds": 0.031,
-          "json": true
-        }
+        "ok": false,
+        "checked_at": "2026-11-13T05:58:37Z",
+        "error": "connection error: [WinError 10061] No connection could be made because the target machine actively refused it",
+        "error_category": "unreachable",
+        "status_code": null,
+        "detail": {}
       }
     },
     "gmail": {
-      "target_id": "gmail-agent",
+      "target_id": "gmail-write-agent",
+      "mode": "send",
+      "recipient": "anoushkas2006@gmail.com",
       "max_results": 5,
-      "timeout_seconds": 120.0,
+      "timeout_seconds": 180.0,
+      "url": "http://127.0.0.1:8000",
       "method": "gmail",
-      "connected_at": "2026-11-12T05:08:10Z",
+      "connected_at": "2026-11-13T05:47:42Z",
       "last_validation": {
         "ok": true,
-        "checked_at": "2026-11-12T05:08:10Z",
+        "checked_at": "2026-11-13T05:47:42Z",
         "error": null,
         "error_category": null,
         "status_code": null,
         "detail": {
+          "mode": "send",
+          "scope": "https://www.googleapis.com/auth/gmail.readonly",
+          "email_count": 1,
+          "label": "NEMESIS_DEMO",
           "checks": {
             "oauth": true,
             "read_only_scope": true,
-            "gmail_read": true
-          }
+            "gmail_read": true,
+            "write_token": true,
+            "write_scopes": [
+              "https://www.googleapis.com/auth/gmail.compose",
+              "https://www.googleapis.com/auth/gmail.send"
+            ],
+            "recipient_allowlisted": true,
+            "live_send_armed": true,
+            "allowed_recipients": [
+              "anoushkas2006@gmail.com"
+            ],
+            "kill_switch_engaged": false,
+            "write_token_expired": false
+          },
+          "recipient": "anoushkas2006@gmail.com"
         }
       }
     }

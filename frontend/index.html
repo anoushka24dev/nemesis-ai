@@ -42,10 +42,6 @@
         <svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6V3Z"/><path d="M9 12h7M9 16h7M9 8h3"/></svg>
         <span>Reports</span>
       </button>
-      <button class="nav-item" data-page="gmail">
-        <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
-        <span>Gmail Agent</span>
-      </button>
       <button class="nav-item" data-page="settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
         <span>Settings</span>
@@ -185,6 +181,7 @@
                   </button>
                 </div>
               </div>
+              <p class="fineprint" id="activeControlNote" hidden></p>
 
               <div class="stat-grid">
                 <div class="stat">
@@ -248,24 +245,18 @@
                 </div>
               </div>
 
-              <div class="two-col">
-                <div class="panel">
-                  <div class="panel-head"><h4>Hill-climber decisions</h4><span class="panel-meta" id="climbMeta">—</span></div>
-                  <div class="table-scroll">
-                    <table class="table">
-                      <thead><tr><th>Iter</th><th>Strategy</th><th>Parent ASR</th><th>Candidate ASR</th><th>Decision</th><th>Δ</th></tr></thead>
-                      <tbody id="climbBody"><tr><td colspan="6" class="empty">No candidate decisions yet.</td></tr></tbody>
-                    </table>
-                  </div>
-                  <div class="panel-head" style="margin-top:14px"><h4>Accepted-strategy execution</h4></div>
-                  <ul class="activity" id="confirmList"><li class="muted small">No accepted strategy in the latest run.</li></ul>
-                  <div class="panel-head" style="margin-top:14px"><h4>Target responses (executed best strategy)</h4></div>
-                  <ul class="activity" id="targetEvidenceList"><li class="muted small">No target evidence recorded.</li></ul>
+              <div class="panel">
+                <div class="panel-head"><h4>Hill-climber decisions</h4><span class="panel-meta" id="climbMeta">—</span></div>
+                <div class="table-scroll">
+                  <table class="table">
+                    <thead><tr><th>Iter</th><th>Strategy</th><th>Parent ASR</th><th>Candidate ASR</th><th>Decision</th><th>Δ</th></tr></thead>
+                    <tbody id="climbBody"><tr><td colspan="6" class="empty">No candidate decisions yet.</td></tr></tbody>
+                  </table>
                 </div>
-                <div class="panel">
-                  <div class="panel-head"><h4>Model proposals</h4><span class="panel-meta" id="proposalMeta">—</span></div>
-                  <ul class="activity" id="proposalList"><li class="muted small">No model request recorded for the latest run.</li></ul>
-                </div>
+                <div class="panel-head" style="margin-top:14px"><h4>Accepted-strategy execution</h4></div>
+                <ul class="activity" id="confirmList"><li class="muted small">No accepted strategy in the latest run.</li></ul>
+                <div class="panel-head" style="margin-top:14px"><h4>Target responses (executed best strategy)</h4></div>
+                <ul class="activity" id="targetEvidenceList"><li class="muted small">No target evidence recorded.</li></ul>
               </div>
 
               <div class="panel" id="channelsPanel">
@@ -285,6 +276,10 @@
                   </table>
                 </div>
                 <div class="fineprint" id="budgetNote"></div>
+                <div class="panel-head" style="margin-top:14px"><h4>Episodes — persisted evidence</h4><span class="panel-meta" id="episodeMeta">—</span></div>
+                <div class="fineprint" id="episodeSummary"></div>
+                <ul class="activity" id="episodeList"><li class="muted small">No per-episode records persisted.</li></ul>
+                <div class="fineprint" id="episodeNote"></div>
                 <div class="panel-head" style="margin-top:14px"><h4>Campaign evidence</h4><span class="panel-meta" id="campaignMeta">—</span></div>
                 <ul class="activity" id="campaignEvidenceList"><li class="muted small">No campaign evidence recorded.</li></ul>
               </div>
@@ -341,37 +336,10 @@
         <div class="page-head">
           <div>
             <h2>Agents</h2>
-            <p>Connect a real target. A connection is only “ready” after its probe succeeds.</p>
+            <p>Configure target connections. A connection is ready only after its probe succeeds.</p>
           </div>
         </div>
         <div id="agentMethodList" class="agents-grid"></div>
-        <div class="card pad">
-          <h3 class="card-title">HTTP API contract</h3>
-          <p class="small muted">Your agent must accept a <code>POST</code> request with this JSON body and reply with a JSON object containing <code>output</code> (and optionally <code>tool_calls</code> and <code>observations</code>). Nemesis sends one bounded probe before a connection is marked ready.</p>
-          <pre class="code-block" id="httpContract">POST &lt;your endpoint&gt;
-Content-Type: application/json
-
-{
-  "probe": true,
-  "session_id": "nemesis-connectivity-probe",
-  "correlation_id": "&lt;hex&gt;",
-  "input": "&lt;attack prompt or benign probe text&gt;",
-  "available_tools": [],
-  "history": []
-}
-
-# expected response (200)
-{
-  "output": "...",
-  "tool_calls": [],
-  "observations": {
-    "unauthorized_access": null,
-    "exfiltrated": null,
-    "disclosed": null
-  }
-}</pre>
-          <p class="fineprint">A non-2xx response, a timeout or a non-JSON body is a technical failure. It is never counted as a blocked attack. Authorization headers are held in memory for this process only and are never stored or returned.</p>
-        </div>
       </section>
 
       <!-- ==================== DEFENSES ==================== -->
@@ -379,20 +347,20 @@ Content-Type: application/json
         <div class="page-head">
           <div>
             <h2>Defenses</h2>
-            <p>Attacker campaigns finish on their own. Defense evaluation is a separate operation: choose a completed campaign, choose the saved cases, then press Run Defense.</p>
+            <p>Select a completed campaign and saved cases, then run one defense. Nothing starts automatically.</p>
           </div>
         </div>
         <div class="card pad">
           <div class="barrier" id="barrierBox">Checking completed attacker campaigns…</div>
           <div class="defense-controls">
-            <label>Completed attacker campaign
+            <label>Completed campaign
               <select id="defenseCampaignSelect"><option value="">— none —</option></select>
             </label>
             <label>Defense
               <select id="defenseSelect">
                 <optgroup label="Real research implementations">
-                  <option value="progent_real">Progent — real paper artifact (MIT, vendored) · deny-by-default (enforcement timing reported per case)</option>
-                  <option value="camel_real">CaMeL — real Google core (Apache-2.0) · provenance + default-deny</option>
+                  <option value="progent_real">Progent — real paper artifact (vendored) · deny-by-default</option>
+                  <option value="camel_real">CaMeL — real Google core · provenance + deny</option>
                 </optgroup>
                 <optgroup label="Local proxies (labelled, not the research systems)">
                   <option value="marker">CaMeL-style marker (local proxy)</option>
@@ -403,9 +371,12 @@ Content-Type: application/json
             </label>
             <button class="btn primary" id="runDefenseBtn" disabled>Run Defense</button>
           </div>
-          <div id="defenseCampaignMeta" class="fineprint">No campaign selected.</div>
+          <details class="provenance">
+            <summary>Campaign &amp; target provenance</summary>
+            <div id="defenseCampaignMeta" class="fineprint">No campaign selected.</div>
+          </details>
           <div class="defense-case-head">
-            <span>Saved attack cases</span>
+            <span>Eligible attack cases</span>
             <div class="defense-case-actions">
               <button class="link-btn" id="defenseSelectAll" type="button">Select all eligible</button>
               <button class="link-btn" id="defenseClearSelection" type="button">Clear</button>
@@ -415,31 +386,11 @@ Content-Type: application/json
           <div id="defenseCaseSelect" class="case-select-list">
             <div class="muted small">Choose a completed campaign to list its saved cases.</div>
           </div>
-          <div id="defenseExclusions" class="fineprint"></div>
           <div id="defenseJobStatus" class="defense-result muted small">No defense job in this session.</div>
           <div id="defenseResult" class="defense-result muted small">No defense result selected.</div>
         </div>
-        <div id="defenseCatalog" class="defense-grid"></div>
         <div class="card pad">
-          <h3 class="card-title">Pre-execution enforcement (cooperative local target)</h3>
-          <p class="fineprint">The target proposes an action without executing it. The selected defense decides ALLOW or DENY; DENY never reaches the instrumented executor. This is a separate Defenses action and is never triggered by an attack campaign.</p>
-          <div class="defense-controls">
-            <label>Defense
-              <select id="preExecDefenseSelect"></select>
-            </label>
-            <button class="btn primary" id="runPreExecBtn" disabled>Run pre-execution check</button>
-          </div>
-          <div id="preExecStatus" class="defense-result muted small">No pre-execution check in this session.</div>
-          <div id="preExecMetrics" class="fineprint"></div>
-          <div class="table-scroll">
-            <table class="table">
-              <thead><tr><th>Execution</th><th>Defense</th><th>Case</th><th>Proposed action</th><th>Decision</th><th>Boundary</th><th>Executor</th><th>Verdict</th><th>Evidence</th></tr></thead>
-              <tbody id="preExecBody"><tr><td colspan="9" class="empty">No pre-execution executions yet.</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="card pad">
-          <h3 class="card-title">Defense evaluations (persisted)</h3>
+          <div class="panel-head"><h4>Defense evaluations (persisted)</h4></div>
           <div class="table-scroll">
             <table class="table">
               <thead><tr><th>Source run</th><th>Case</th><th>Defense</th><th>State</th><th>Cases</th><th>Success</th><th>Blocked</th><th>Inconclusive</th><th>Technical</th><th>Evaluated</th></tr></thead>
@@ -492,90 +443,6 @@ Content-Type: application/json
         </div>
       </section>
 
-      <!-- ==================== GMAIL AGENT ==================== -->
-      <section class="page" id="page-gmail" hidden>
-        <div class="page-head">
-          <div>
-            <h2>Gmail Agent</h2>
-            <p>Real Gmail integration. Reading and analysis use the read-only OAuth token; Compose, Reply, Forward and Send use the separate Gmail write authorization. Nothing is simulated and nothing is sent by generating a draft.</p>
-          </div>
-          <div class="page-actions">
-            <button class="btn secondary" id="gmailRefreshBtn">Refresh status</button>
-            <button class="btn secondary" data-page="agents">Manage connection</button>
-          </div>
-        </div>
-        <div class="card pad">
-          <h3 class="card-title">Connection</h3>
-          <div id="gmailStatus" class="defense-result muted small">Checking the real Gmail connection…</div>
-        </div>
-        <div class="card pad">
-          <div class="bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn primary" id="gmailLoadBtn">Load NEMESIS_DEMO inbox</button>
-            <button class="btn secondary" id="gmailAnalyzeBtn">Analyze inbox (local Ollama)</button>
-            <span class="muted small" id="gmailInboxMeta"></span>
-          </div>
-          <div class="table-scroll" style="margin-top:12px">
-            <table class="table">
-              <thead><tr><th>ID</th><th>Sender</th><th>Subject</th><th>Received</th><th>Snippet</th></tr></thead>
-              <tbody id="gmailInboxBody"><tr><td colspan="5" class="empty">No inbox loaded.</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="card pad">
-          <h3 class="card-title">Threat analysis</h3>
-          <div id="gmailAnalysis" class="defense-result muted small">Run “Analyze inbox” to send the fetched messages through the local analysis engine.</div>
-        </div>
-
-        <div class="card pad">
-          <h3 class="card-title">Email agent — compose, reply, forward, send</h3>
-          <p class="small muted">Drafts are written by local Ollama <code>llama3.1:8b</code> from the selected message's real context. Generating a draft never sends it. Only <strong>Send via Gmail</strong> calls the Gmail API, and it reports success only when Gmail confirms a message id.</p>
-          <div id="gmailWriteStatus" class="defense-result muted small">Checking write authorization…</div>
-          <div class="bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
-            <button class="btn secondary" id="gmailWriteRefreshBtn">Refresh send status</button>
-            <button class="btn secondary" id="gmailStopSendBtn">Toggle outbound stop</button>
-          </div>
-          <div class="bar" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:14px">
-            <label class="small">Action
-              <select id="gmailAction" class="input">
-                <option value="compose">Compose</option>
-                <option value="reply">Reply</option>
-                <option value="forward">Forward</option>
-              </select>
-            </label>
-            <label class="small" style="flex:1;min-width:200px">Recipient
-              <input id="gmailRecipient" class="input" type="email" placeholder="recipient@example.com" />
-            </label>
-            <label class="small" style="flex:1;min-width:160px">Source message
-              <input id="gmailSourceId" class="input" type="text" placeholder="select a row above" readonly />
-            </label>
-            <button class="btn secondary" id="gmailGenerateBtn">Generate with Ollama</button>
-          </div>
-          <label class="small" style="display:block;margin-top:10px">Instruction (optional)
-            <textarea id="gmailInstruction" class="input" rows="2" placeholder="What should this email say?"></textarea>
-          </label>
-          <label class="small" style="display:block;margin-top:10px">Subject
-            <input id="gmailSubject" class="input" type="text" />
-          </label>
-          <label class="small" style="display:block;margin-top:10px">Body (editable before sending)
-            <textarea id="gmailBody" class="input" rows="10"></textarea>
-          </label>
-          <div class="bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
-            <button class="btn primary" id="gmailSendBtn">Send via Gmail</button>
-            <span class="muted small" id="gmailDraftMeta"></span>
-          </div>
-          <div id="gmailSendResult" class="defense-result muted small" style="margin-top:10px">No send attempted in this session.</div>
-        </div>
-
-        <div class="card pad">
-          <h3 class="card-title">Email agent history</h3>
-          <div class="table-scroll">
-            <table class="table">
-              <thead><tr><th>Time</th><th>Type</th><th>Action</th><th>Recipient</th><th>Subject</th><th>Status</th><th>Gmail message</th><th>Thread</th></tr></thead>
-              <tbody id="gmailHistoryBody"><tr><td colspan="8" class="empty">No draft or send recorded yet.</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
 
       <!-- ==================== SETTINGS ==================== -->
       <section class="page" id="page-settings" hidden>

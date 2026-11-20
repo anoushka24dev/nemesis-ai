@@ -111,6 +111,23 @@ def gmail_status(*, force: bool = False) -> dict:
             error = str(exc)
     elif not meta["token_present"]:
         error = "No Gmail token is stored. Connect the read-only sandbox account first."
+    write_info = {}
+    if meta["token_present"]:
+        from gmail_live import inspect_write_token
+
+        # One verified inspection: a real refresh proves whether the write
+        # token can actually draft/send, instead of trusting its timestamp.
+        winfo = inspect_write_token(verify_refresh=True)
+        write_info = {
+            "write_token_present": bool(winfo.get("present")),
+            "write_token_scope_valid": bool(winfo.get("scope_valid")),
+            "write_token_expired": winfo.get("expired"),
+            "write_token_refresh_verified": bool(winfo.get("refresh_verified")),
+            "write_token_structurally_valid": bool(winfo.get("structurally_valid")),
+            "write_token_scopes": list(winfo.get("scopes") or []),
+            "write_token_error": winfo.get("error") or None,
+        }
+
     data = {
         "provider": "gmail",
         "connected": connected,
@@ -126,6 +143,7 @@ def gmail_status(*, force: bool = False) -> dict:
         ),
         "connect_error": _GMAIL_CONNECT.get("error"),
         "checked_at": _now_iso(),
+        **write_info,
     }
     _GMAIL_STATUS_CACHE["at"] = now
     _GMAIL_STATUS_CACHE["data"] = data
@@ -438,6 +456,8 @@ def build_overview(harness) -> dict:
     )
     from backend.adaptive_harness import (
         APPROVED_EXPERIMENT_EPISODE_BUDGET,
+        GMAIL_WRITE_OBJECTIVE_IDS,
+        GMAIL_WRITE_OBJECTIVES,
         MAX_EPISODES,
         MAX_ITERATIONS,
         MAX_MAX_ROUNDS,
@@ -601,6 +621,17 @@ def build_overview(harness) -> dict:
                 "run_status": run_dict.get("status"),
             }
 
+    try:
+        control_state = harness.control_state()
+    except Exception as exc:  # noqa: BLE001 - surfaced, never silently disabled
+        control_state = {
+            "can_pause": False,
+            "can_resume": False,
+            "can_stop": False,
+            "reason": f"control state unavailable: {exc}",
+            "resume_source": None,
+        }
+
     # A completed attacker run without a usable persisted case is NOT
     # "defense ready": the lifecycle must agree with the eligibility verdict.
     if (
@@ -729,6 +760,15 @@ def build_overview(harness) -> dict:
                     TOP_LEVEL_ATTACK_CATEGORY_IDS, TOP_LEVEL_ATTACK_CATEGORIES
                 )
             ],
+            # Objectives measured against the real Gmail write/send path. Kept
+            # separate from the fixed three so "all" keeps its original
+            # meaning; the UI offers these as explicit single selections.
+            "gmail_objectives": [
+                {"id": i, "name": n}
+                for i, n in zip(
+                    GMAIL_WRITE_OBJECTIVE_IDS, GMAIL_WRITE_OBJECTIVES
+                )
+            ],
             "dimensions": [
                 {"id": i, "name": n}
                 for i, n in zip(STRATEGY_DIMENSION_IDS, STRATEGY_DIMENSIONS)
@@ -742,6 +782,10 @@ def build_overview(harness) -> dict:
             "attacker_complete": bool(run_dict and run_dict.get("status") == "completed"),
             "barrier_reason": barrier_reason,
             "eligibility": eligibility,
+            # Which lifecycle actions the backend can actually perform right
+            # now, plus the reason when one is unavailable. The UI renders this
+            # instead of guessing from the last run's status.
+            "control": control_state,
         },
         "settings": {
             "search_mode": status.get("search_mode"),
@@ -945,6 +989,9 @@ class DemoHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/gmail/history":
             self._api_gmail_history(parsed)
             return
+        if parsed.path == "/api/gmail-agent/health":
+            self._api_gmail_agent_health()
+            return
         super().do_GET()
 
     def do_POST(self):
@@ -1015,6 +1062,12 @@ class DemoHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/gmail/kill_switch":
             self._api_gmail_kill_switch(payload)
+            return
+        if parsed.path == "/api/gmail-agent/execute":
+            self._api_gmail_agent_execute(payload)
+            return
+        if parsed.path == "/api/gmail-agent/health":
+            self._api_gmail_agent_health()
             return
 
         self.send_error(404, "Unknown POST endpoint")
@@ -1200,6 +1253,115 @@ class DemoHandler(SimpleHTTPRequestHandler):
             self._send_json(gmail_agent.write_status())
         except Exception as exc:  # noqa: BLE001 - surfaced, never hidden
             self._send_json({"error": str(exc)}, status=500)
+
+    def _api_gmail_agent_health(self):
+        """Health/capability probe for the Gmail agent endpoint."""
+        try:
+            from backend import gmail_agent
+            from backend import connections
+
+            store = connections.get_store()
+            active = store.active()
+            config = (active or {}).get("config") or {}
+            mode = str(config.get("mode") or "read_only")
+            recipient = str(config.get("recipient") or "")
+            ws = gmail_agent.write_status()
+            self._send_json({
+                "ok": True,
+                "agent": "gmail",
+                "mode": mode,
+                "recipient": recipient,
+                "capabilities": {
+                    "read": True,
+                    "draft": mode in {"draft", "send"},
+                    "send": mode == "send",
+                },
+                "write_token_present": ws.get("write_token_present", False),
+                "write_token_scopes": ws.get("write_token_scopes", []),
+                "recipient_allowlisted": bool(recipient),
+                "live_send_armed": ws.get("live_send_armed", False),
+                "kill_switch_engaged": ws.get("kill_switch_engaged", False),
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"ok": False, "error": str(exc)}, status=500)
+
+    def _api_gmail_agent_execute(self, payload: dict):
+        """Execute one Gmail agent turn via HTTP (wraps the real agent)."""
+        try:
+            from adaptive_agent_eval.target.gmail_agent_write import (
+                GmailAgentTargetAdapter,
+            )
+            from adaptive_agent_eval.models import AttackPayload
+            from backend import connections
+
+            store = connections.get_store()
+            active = store.active()
+            config = (active or {}).get("config") or {}
+            mode = str(config.get("mode") or "read_only")
+            recipient = str(config.get("recipient") or "")
+            target_id = str(config.get("target_id") or "gmail-write-agent")
+            max_results = int(config.get("max_results") or 5)
+            timeout = float(config.get("timeout_seconds") or 180.0)
+            allow_send = mode == "send"
+
+            adapter = GmailAgentTargetAdapter(
+                target_id=target_id,
+                mode=mode,
+                recipient=recipient,
+                max_results=max_results,
+                timeout_seconds=timeout,
+                allow_send=allow_send,
+            )
+            # Build an AttackPayload from the HTTP request, preserving the
+            # structured metadata (e.g., the email fields) sent by the caller
+            # so the Gmail agent target can reconstruct the full payload.
+            input_text = str(payload.get("input") or "")
+            session_id = str(payload.get("session_id") or "gmail-agent-session")
+            correlation_id = str(payload.get("correlation_id") or "")
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            category = str(payload.get("category") or "direct_injection")
+            try:
+                sophistication_level = int(payload.get("sophistication_level") or 1)
+            except (TypeError, ValueError):
+                sophistication_level = 1
+            from adaptive_agent_eval.target.adapter import TargetSession
+
+            session = TargetSession(
+                session_id=session_id,
+                correlation_id=correlation_id,
+                target_id=target_id,
+                metadata={},
+            )
+            attack_payload = AttackPayload(
+                text=input_text,
+                category=category,
+                sophistication_level=sophistication_level,
+                metadata=metadata,
+            )
+            result = adapter.execute_turn(session, attack_payload)
+            self._send_json({
+                "output": result.output_text,
+                "tool_calls": [
+                    {
+                        "tool_name": tc.tool_name,
+                        "arguments": tc.arguments,
+                        "raw_text": tc.raw_text,
+                    }
+                    for tc in (result.tool_calls or [])
+                ],
+                "observations": result.observations or {},
+                "evidence": result.evidence or {},
+                "ground_truth": (result.evidence or {}).get("ground_truth"),
+                "transport_error": result.transport_error,
+                "is_technical_failure": result.is_technical_failure,
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(
+                {"output": "", "error": str(exc), "is_technical_failure": True},
+                status=500,
+            )
 
     def _api_gmail_history(self, parsed=None):
         limit = 50

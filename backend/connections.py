@@ -109,20 +109,61 @@ CONNECTION_METHODS: list[dict[str, Any]] = [
         "status": "available",
         "status_label": "Supported",
         "description": (
-            "Evaluate real NEMESIS_DEMO Gmail messages through the existing "
-            "read-only OAuth token and local Ollama analysis engine."
+            "Drive the repository's real Gmail agent: read-only inbox analysis, "
+            "or the draft/send workflow through the separate write token. The "
+            "selected mode is what the campaign executes."
         ),
         "requires": [
-            "a valid gmail.readonly OAuth token",
-            "at least one NEMESIS_DEMO-labelled message for a live turn",
-            "local Ollama with llama3.1:8b",
+            "a valid gmail.readonly OAuth token (reads and readback)",
+            "for draft/send: a valid gmail.compose (+ gmail.send) write token",
+            "for draft/send: an allowlisted recipient",
+            "local Ollama with llama3.1:8b for generated content",
         ],
         "limitations": [
-            "only gmail.readonly is accepted; no send, modify or delete scope",
-            "analysis is detection and recommendation only; no Gmail write is executed",
-            "a model or OAuth failure is a technical failure, never a blocked attack",
+            (
+                "send mode refuses to start unless the write token is valid and "
+                "the live send transport is armed; it never downgrades to draft"
+            ),
+            (
+                "an attack payload can never choose the recipient: the configured "
+                "allowlisted address is the only authorized destination"
+            ),
+            "a model, OAuth or Gmail API failure is a technical failure, never a blocked attack",
         ],
-        "fields": [],
+        "fields": [
+            {
+                "name": "mode",
+                "label": "Execution mode",
+                "type": "select",
+                "default": "read_only",
+                "options": [
+                    {
+                        "value": "read_only",
+                        "label": "Read-only",
+                    },
+                    {
+                        "value": "draft",
+                        "label": "Draft",
+                    },
+                    {
+                        "value": "send",
+                        "label": "Send",
+                    },
+                ],
+            },
+            {
+                "name": "recipient",
+                "label": "Allowlisted recipient",
+                "placeholder": "you@example.com",
+            },
+            {"name": "max_results", "label": "Messages per turn", "placeholder": "5"},
+            {"name": "target_id", "label": "Target id (optional)", "placeholder": "gmail-agent"},
+            {
+                "name": "url",
+                "label": "Gmail agent URL (optional)",
+                "placeholder": "https://gmail.google.com or custom endpoint",
+            },
+        ],
     },
     {
         "method": METHOD_AGENT_FRAMEWORK,
@@ -265,6 +306,24 @@ def probe_http_endpoint(
         }
 
 
+#: Gmail agent evaluation modes. ``read_only`` can never write; ``draft`` and
+#: ``send`` drive the repository's real ``backend.gmail_agent`` workflow.
+GMAIL_MODES: tuple[str, ...] = ("read_only", "draft", "send")
+
+#: Operator-facing adapter names. A mode is never presented as plain
+#: "Gmail Agent", and none of them implies a capability the token lacks.
+GMAIL_ADAPTER_LABELS: dict[str, str] = {
+    "read_only": "Gmail Read-only Inbox",
+    "draft": "Gmail Agent — Draft mode",
+    "send": "Gmail Agent — Send mode",
+}
+
+
+def gmail_adapter_label(mode: str | None) -> str:
+    """The adapter name shown for a Gmail evaluation mode."""
+    return GMAIL_ADAPTER_LABELS.get(str(mode or "read_only"), "Gmail Read-only Inbox")
+
+
 def probe_gmail_readonly() -> dict[str, Any]:
     """Validate the real read-only Gmail connection without writing anything."""
     try:
@@ -299,6 +358,120 @@ def probe_gmail_readonly() -> dict[str, Any]:
             "error": f"{type(exc).__name__}: {exc}",
             "error_category": "gmail",
         }
+
+
+def probe_gmail_agent(mode: str = "read_only", recipient: str = "") -> dict[str, Any]:
+    """Verify the REAL capability of the selected Gmail agent mode.
+
+    ``read_only`` only needs the read token. ``draft``/``send`` additionally
+    need the separate write token with the right scopes, and the configured
+    recipient must be inside the outbound allowlist. Anything missing is
+    reported as ``ok: False`` with the actual reason — a mode is never
+    silently downgraded to read-only.
+    """
+    mode = str(mode or "read_only").strip().lower()
+    if mode not in GMAIL_MODES:
+        return {
+            "ok": False,
+            "error": f"unknown Gmail mode {mode!r}; expected one of {list(GMAIL_MODES)}",
+            "error_category": "config",
+        }
+    read_probe = probe_gmail_readonly()
+    checks: dict[str, Any] = {
+        "oauth": bool(read_probe.get("ok")),
+        "read_only_scope": bool(read_probe.get("ok")),
+        "gmail_read": bool(read_probe.get("ok")),
+        "write_token": None,
+        "write_scopes": None,
+        "recipient_allowlisted": None,
+        "live_send_armed": None,
+    }
+    result: dict[str, Any] = {
+        "ok": bool(read_probe.get("ok")),
+        "mode": mode,
+        "scope": read_probe.get("scope"),
+        "email_count": read_probe.get("email_count"),
+        "label": read_probe.get("label"),
+        "checks": checks,
+        "error": read_probe.get("error"),
+        "error_category": read_probe.get("error_category"),
+    }
+    if mode == "read_only":
+        return result
+
+    # -- draft / send: the write token is required, never substituted --------
+    try:
+        from gmail_live import inspect_write_token, live_send_status
+
+        token = inspect_write_token(verify_refresh=True)
+        checks["write_token"] = bool(token.get("scope_valid"))
+        checks["write_scopes"] = list(token.get("scopes") or [])
+        # Prove the credential with a real refresh: a revoked or unusable
+        # write token must fail the connect probe, not merely look unexpired.
+        armed = live_send_status(verify_refresh=True)
+        checks["live_send_armed"] = bool(armed.get("live_send_armed"))
+        # The allowlist is the outbound policy's, not the token's: read it from
+        # the same resolver the send workflow enforces.
+        from backend.gmail_agent import _allowed_recipients
+
+        allow_set, domain_set = _allowed_recipients()
+        allowed = {str(a).lower() for a in allow_set}
+        domains = {str(d).lower().lstrip("@") for d in domain_set}
+        address = str(recipient or "").strip().lower()
+        checks["recipient_allowlisted"] = bool(
+            address
+            and (address in allowed or ("@" in address and address.split("@", 1)[1] in domains))
+        )
+        checks["allowed_recipients"] = sorted(allowed)
+        checks["kill_switch_engaged"] = bool(armed.get("kill_switch_engaged"))
+        checks["write_token_expired"] = token.get("expired")
+    except Exception as exc:  # noqa: BLE001 - a real failure is reported
+        return {
+            **result,
+            "ok": False,
+            "error": f"write authorization check failed: {type(exc).__name__}: {exc}",
+            "error_category": "credentials",
+        }
+
+    if not checks["write_token"]:
+        return {
+            **result,
+            "ok": False,
+            "error": (
+                "the write token is missing or its scopes are not "
+                "gmail.compose/gmail.send; re-run `python -m gmail_live auth` "
+                "(read-only credentials never authorize writes)"
+            ),
+            "error_category": "credentials",
+        }
+    if not checks["recipient_allowlisted"]:
+        return {
+            **result,
+            "ok": False,
+            "error": (
+                f"recipient {recipient!r} is not in the outbound allowlist "
+                f"({sorted(checks.get('allowed_recipients') or [])}); draft/send "
+                "mode requires an explicitly allowlisted address"
+            ),
+            "error_category": "allowlist",
+        }
+    if not checks["live_send_armed"]:
+        # Drafts are a real mailbox write too, and both modes need a usable
+        # write token. Claiming a mode whose token cannot be refreshed would
+        # produce a run that fails at every write, so it is refused here.
+        return {
+            **result,
+            "ok": False,
+            "error": (
+                f"{mode} mode requires a usable write token; the stored token "
+                "could not be proven (expired or revoked). Re-run "
+                "`python -m gmail_live auth` in a browser, then reconnect. The "
+                "run will NOT downgrade to read-only."
+            ),
+            "error_category": "credentials",
+        }
+    result["ok"] = bool(result["ok"])
+    return result
 
 
 def probe_langchain_agent(
@@ -448,6 +621,10 @@ class ConnectionStore:
             else:
                 entry["config"] = None
                 entry["last_validation"] = None
+            if meta["method"] == METHOD_GMAIL and entry.get("config"):
+                # The card must name the adapter that will actually run.
+                entry["display_name"] = gmail_adapter_label(entry["config"].get("mode"))
+                entry["mode"] = entry["config"].get("mode") or "read_only"
             entry["selected"] = active == meta["method"]
             entry["connected"] = bool(
                 stored
@@ -470,9 +647,13 @@ class ConnectionStore:
         if not stored:
             return None
         meta = _method_meta(method)
+        display_name = meta["display_name"]
+        if method == METHOD_GMAIL:
+            display_name = gmail_adapter_label(stored.get("mode"))
         return {
             "method": method,
-            "display_name": meta["display_name"],
+            "display_name": display_name,
+            "mode": stored.get("mode") if method == METHOD_GMAIL else None,
             "status": meta["status"],
             "config": {k: v for k, v in stored.items() if k != "last_validation"},
             "last_validation": stored.get("last_validation"),
@@ -507,12 +688,44 @@ class ConnectionStore:
                 "timeout_seconds": float(config.get("timeout_seconds") or 15.0),
             }
         if active["method"] == METHOD_GMAIL:
+            mode = _clean(config.get("mode")) or "read_only"
+            recipient = _clean(config.get("recipient"))
+            url = _clean(config.get("url"))
+            # If a Gmail agent URL is configured, use it as an HTTP endpoint
+            # that wraps the real Gmail agent execution path.
+            if url and url.startswith(("http://", "https://")):
+                return {
+                    "kind": "http_api",
+                    "endpoint_url": url.rstrip("/") + "/api/gmail-agent/execute",
+                    "target_id": _clean(config.get("target_id")) or "gmail-agent-url",
+                    "name": f"Gmail agent ({mode} mode via URL)",
+                    "auth_header": None,
+                    "timeout_seconds": float(config.get("timeout_seconds") or 180.0),
+                    "gmail": True,
+                    "mode": mode,
+                    "recipient": recipient,
+                    "payload_recipient": "billing@northwind-invoices.invalid",
+                    "model": "llama3.1:8b",
+                }
+            # read_only keeps the untouched read-only adapter; draft/send use
+            # the real write adapter, which drives backend.gmail_agent.
+            if mode == "read_only":
+                return {
+                    "kind": "gmail_agent",
+                    "target_id": _clean(config.get("target_id")) or "gmail-agent",
+                    "name": "Gmail read-only agent",
+                    "max_results": int(config.get("max_results") or 5),
+                    "timeout_seconds": float(config.get("timeout_seconds") or 120.0),
+                }
             return {
-                "kind": "gmail_agent",
-                "target_id": _clean(config.get("target_id")) or "gmail-agent",
-                "name": "Gmail read-only agent",
+                "kind": "gmail_agent_write",
+                "target_id": _clean(config.get("target_id")) or "gmail-write-agent",
+                "name": f"Gmail agent ({mode} mode)",
+                "mode": mode,
+                "recipient": recipient,
+                "allow_send": mode == "send",
                 "max_results": int(config.get("max_results") or 5),
-                "timeout_seconds": float(config.get("timeout_seconds") or 120.0),
+                "timeout_seconds": float(config.get("timeout_seconds") or 180.0),
             }
         if active["method"] == METHOD_AGENT_FRAMEWORK:
             model = _clean(config.get("model")) or "llama3.1:8b"
@@ -578,12 +791,35 @@ class ConnectionStore:
                 "timeout_seconds": timeout,
             }
         elif method == METHOD_GMAIL:
-            target_id = _clean(config.get("target_id")) or "gmail-agent"
-            probe = probe_gmail_readonly()
+            mode = _clean(config.get("mode")) or "read_only"
+            if mode not in GMAIL_MODES:
+                return {
+                    "ok": False,
+                    "method": method,
+                    "error": (
+                        f"unknown Gmail mode {mode!r}; expected one of "
+                        f"{list(GMAIL_MODES)}"
+                    ),
+                    "error_category": "config",
+                }
+            target_id = _clean(config.get("target_id")) or (
+                "gmail-agent" if mode == "read_only" else "gmail-write-agent"
+            )
+            recipient = _clean(config.get("recipient"))
+            probe = probe_gmail_agent(mode, recipient)
+            probe["mode"] = mode
+            probe["recipient"] = recipient or None
+            url = _clean(config.get("url") or config.get("agent_url"))
             stored = {
                 "target_id": target_id,
+                "mode": mode,
+                "recipient": recipient,
                 "max_results": int(config.get("max_results") or 5),
-                "timeout_seconds": float(config.get("timeout_seconds") or 120.0),
+                "timeout_seconds": float(
+                    config.get("timeout_seconds")
+                    or (120.0 if mode == "read_only" else 180.0)
+                ),
+                "url": url,
             }
         elif method == METHOD_AGENT_FRAMEWORK:
             model = _clean(config.get("model")) or "llama3.1:8b"
@@ -629,6 +865,11 @@ class ConnectionStore:
                         "checks",
                         "evidence_channels",
                         "observations",
+                        "mode",
+                        "recipient",
+                        "scope",
+                        "email_count",
+                        "label",
                     }
                 },
             },

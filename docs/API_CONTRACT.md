@@ -88,6 +88,32 @@ The final candidate's evaluation:
 }
 ```
 
+### Per-episode records in the run record
+
+Every executed episode has its own persistent record; the final evaluation no
+longer overwrites the earlier ones. A run record contains:
+
+| Field | Meaning |
+| --- | --- |
+| `episode_records` | One object per EXECUTED episode, in execution order |
+| `episode_ledger` | Campaign summary computed only from `episode_records` |
+| `evaluations` | One entry per evaluation (baseline / candidate / confirmation / final) with its id, stage, measured ASR and persisted episode count |
+| `episode_trace` | The final evaluation's trace (kept for defense replay and older consumers) |
+
+Each `episode_records[]` entry carries the campaign id, evaluation id, episode
+id and sequence, target identity and evaluation mode, model + generation
+provenance, the generated subject/body and the attacker email that conditioned
+it, the exercised strategy and sophistication, the feedback the generation was
+conditioned on, the actual Gmail operation with its message/thread/draft ids
+and independent readback, the target's ground truth, the separated per-channel
+metrics, the episode score with its eligibility, and the evaluation timestamp.
+
+`episode_ledger` reports `persisted_episodes`, `by_stage`, per-evaluation
+summaries, `baseline_score`, `candidate_score`, `final_score`, a `comparison`
+block (episode counts equal, same target, same evaluation mode, delta, whether
+it is comparable), the `promotion` decision, and a `reconciliation` block
+(`consumed_episodes` vs `persisted_episodes`, with any difference reported).
+
 ### `POST /api/adaptive/run`
 
 ```json

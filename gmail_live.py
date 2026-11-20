@@ -177,6 +177,7 @@ def inspect_write_token(verify_refresh: bool = False) -> dict[str, Any]:
         "has_refresh_token": False,
         "credentials_match": None,
         "refresh_verified": False,
+        "scopes": [],
         "error": None,
     }
     if not token_path.exists():
@@ -193,6 +194,7 @@ def inspect_write_token(verify_refresh: bool = False) -> dict[str, Any]:
     try:
         scopes = validate_write_scopes(declared)
         result["scope_valid"] = bool(scopes)
+        result["scopes"] = sorted(scopes)
     except LiveSendNotArmed as exc:
         result["error"] = str(exc)
     result["has_refresh_token"] = bool(info.get("refresh_token"))
@@ -209,20 +211,28 @@ def inspect_write_token(verify_refresh: bool = False) -> dict[str, Any]:
             result["expired"] = parsed <= datetime.now(timezone.utc)
         except ValueError:
             result["expired"] = None
-    result["structurally_valid"] = bool(
+    # A past expiry does not by itself make the credential unusable: an
+    # offline refresh token can mint a fresh access token. That is decided by
+    # the refresh attempt below, not by the stored timestamp, so expiry is
+    # checked only when no refresh was requested (or the refresh failed).
+    base_valid = bool(
         result["readable"]
         and result["scope_valid"]
         and result["has_refresh_token"]
         and result["credentials_match"] is not False
-        and result["expired"] is not True
     )
-    if verify_refresh and result["structurally_valid"]:
+    refreshed = False
+    if verify_refresh and base_valid:
         try:
             from google.auth.transport.requests import Request
 
             creds = _load_write_credentials()
             creds.refresh(Request())
-            result["refresh_verified"] = bool(creds.token)
+            refreshed = bool(creds.token)
+            result["refresh_verified"] = refreshed
+            if refreshed:
+                # The proven credential is current, whatever token.json said.
+                result["expired"] = False
         except Exception as exc:  # noqa: BLE001 - report, never raise
             # Error text only: no token, client secret or refresh token value.
             result["refresh_verified"] = False
@@ -230,6 +240,9 @@ def inspect_write_token(verify_refresh: bool = False) -> dict[str, Any]:
                 f"write token refresh failed: {type(exc).__name__}: "
                 f"{str(exc).splitlines()[0][:200]}"
             )
+    result["structurally_valid"] = bool(
+        base_valid and (result["expired"] is not True or refreshed)
+    )
     return result
 
 
@@ -327,12 +340,17 @@ def assert_live_send_armed() -> None:
             f"{creds_path} (create a SEPARATE client for write access)"
         )
     _load_write_credentials()  # token presence + scope validation
-    inspected = inspect_write_token()
-    if not inspected.get("structurally_valid") or inspected.get("expired") is True:
+    # Prove the credential with a real refresh instead of trusting the stored
+    # expiry: an offline refresh token routinely outlives its access token,
+    # and the HTTP call below would refresh automatically anyway. A revoked or
+    # structurally broken token still fails closed here.
+    inspected = inspect_write_token(verify_refresh=True)
+    if not inspected.get("structurally_valid"):
         raise LiveSendNotArmed(
-            "live sending is not armed: write token is expired, mismatched to "
-            "the write credentials, lacks a refresh token, or is structurally "
-            f"invalid ({inspected.get('error') or 'unknown token error'})"
+            "live sending is not armed: the write token could not be proven "
+            "(revoked, expired without a usable refresh token, mismatched to "
+            "the write credentials, or structurally invalid: "
+            f"{inspected.get('error') or 'unknown token error'})"
         )
 
 def run_write_consent_flow(

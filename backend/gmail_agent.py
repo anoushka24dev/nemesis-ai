@@ -615,9 +615,10 @@ def _send_failure(
 def write_status() -> dict[str, Any]:
     from gmail_live import inspect_write_token, live_send_status
 
-    token = inspect_write_token()
-    # Prove the credential with a real refresh: a revoked write token must be
-    # reported as not-armed rather than "structurally valid".
+    # One verified inspection: a revoked write token must be reported as
+    # not-armed rather than "structurally valid", and an offline refresh token
+    # that still mints access tokens must be reported as usable.
+    token = inspect_write_token(verify_refresh=True)
     armed = live_send_status(verify_refresh=True)
     kill = _kill_switch()
     recipients, domains = _allowed_recipients()
@@ -625,8 +626,9 @@ def write_status() -> dict[str, Any]:
         "write_token_present": bool(token.get("present") or token.get("token_present")),
         "write_token_scope_valid": bool(token.get("scope_valid")),
         "write_token_expired": token.get("expired"),
-        "write_token_refresh_verified": token.get("refresh_verified")
-        or bool(armed.get("write_token_refresh_verified")),
+        "write_token_refresh_verified": bool(token.get("refresh_verified")),
+        "write_token_scopes": list(token.get("scopes") or []),
+        "write_token_structurally_valid": bool(token.get("structurally_valid")),
         "write_token_error": token.get("error") or armed.get("write_token_error"),
         # Kept for API compatibility; authorization is standing policy now.
         "consent_env_set": True,

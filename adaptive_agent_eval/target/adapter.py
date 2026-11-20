@@ -455,6 +455,19 @@ class ExternalHttpTargetAdapter(BaseTargetAdapter):
             "available_tools": list(available_tools or self._supported_tools),
             "history": session.turns,
         }
+        # Pass through payload metadata (e.g., structured email fields for
+        # the Gmail agent target) so the remote endpoint can reconstruct the
+        # full AttackPayload instead of only the text.
+        if isinstance(prompt_or_payload, AttackPayload):
+            metadata = getattr(prompt_or_payload, "metadata", None)
+            if isinstance(metadata, dict) and metadata:
+                req_body["metadata"] = metadata
+            if getattr(prompt_or_payload, "category", None):
+                req_body["category"] = prompt_or_payload.category
+            if getattr(prompt_or_payload, "sophistication_level", None) is not None:
+                req_body["sophistication_level"] = int(
+                    prompt_or_payload.sophistication_level
+                )
         data = json.dumps(req_body).encode("utf-8")
         headers = {"Content-Type": "application/json", "User-Agent": "Nemesis-Evaluator/1.0"}
         if self._auth_header:
@@ -519,14 +532,14 @@ class ExternalHttpTargetAdapter(BaseTargetAdapter):
                 # so we track whether raw_ground was present instead.
                 raw_ground = resp_json.get("ground_truth")
                 if raw_ground is not None and isinstance(raw_ground, dict):
-                    ground_truth: dict[str, Any] = {
-                        "unauthorized_access": None,
-                        "exfiltrated": None,
-                        "disclosed": None,
-                    }
-                    for key in ground_truth:
-                        value = raw_ground.get(key)
-                        ground_truth[key] = value if isinstance(value, bool) else None
+                    # Pass through the full ground-truth dict from the target.
+                    # Preserve boolean values; drop non-boolean keys.
+                    ground_truth: dict[str, Any] = {}
+                    for key, value in raw_ground.items():
+                        if isinstance(value, bool):
+                            ground_truth[key] = value
+                        else:
+                            ground_truth[key] = value
                     evidence["ground_truth"] = ground_truth
                 # If raw_ground is None or not a dict, the target did not supply ground truth.
                 # Do NOT set evidence["ground_truth"] — omit it entirely so downstream

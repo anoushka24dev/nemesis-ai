@@ -5,6 +5,9 @@ const state = {
   page: "experiments",
   pollTimer: null,
   starting: false,
+  // In-flight lifecycle request ("pause" | "resume" | "stop" | null) so a
+  // double click cannot fire two conflicting transitions at once.
+  controlPending: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -94,12 +97,6 @@ function setPage(page) {
   if (page === "defenses") {
     loadDefenseCampaigns();
     restoreDefenseJob();
-  }
-  if (page === "gmail") {
-    loadGmailStatus();
-  }
-  if (page === "agents") {
-    loadGmailStatus();
   }
 }
 
@@ -262,12 +259,40 @@ function renderActive(o) {
   }
 
   const activeStatus = o.lifecycle?.active_status || (active && active.status) || "";
+  // Terminal statuses must not read as "still going": the pill said
+  // "Incomplete" for a budget-exhausted or stopped run, which looked live.
+  // After a dashboard restart there is no in-memory run, so the persisted
+  // run's own status is the truthful source.
+  const terminalStatus = activeStatus || (run && run.status) || "";
+  const terminalLabel = {
+    budget_exhausted: "Stopped — budget exhausted",
+    stopped: "Stopped by operator",
+    failed: "Failed",
+  };
+  if (phase === "incomplete" && terminalLabel[terminalStatus]) {
+    pill.className = "pill " + (terminalStatus === "failed" ? "bad" : "warn");
+    text.textContent = terminalLabel[terminalStatus];
+  }
+
+  // Pause/Resume/Stop availability comes from the backend's real control
+  // state (can_pause / can_resume / can_stop + reason), never from guessing
+  // off the last run's status. A disabled control always explains itself.
+  const control = o.lifecycle?.control || {};
   const paused = phase === "paused" || activeStatus === "paused";
   const stopping = phase === "stopping" || activeStatus === "stopping";
   const canControl = !!o.lifecycle?.running;
-  $("pauseBtn").disabled = !canControl || paused || stopping;
-  $("resumeBtn").disabled = !canControl || !paused || stopping;
-  $("stopBtn").disabled = !canControl || stopping;
+  const canPause = control.can_pause != null ? !!control.can_pause : (canControl && !paused && !stopping);
+  const canResume = control.can_resume != null ? !!control.can_resume : (canControl && paused && !stopping);
+  const canStop = control.can_stop != null ? !!control.can_stop : (canControl && !stopping);
+  $("pauseBtn").disabled = !canPause || state.controlPending === "pause";
+  $("resumeBtn").disabled = !canResume || state.controlPending === "resume";
+  $("stopBtn").disabled = !canStop || state.controlPending === "stop";
+  const note = $("activeControlNote");
+  if (note) {
+    const message = control.reason || "";
+    note.hidden = !message;
+    note.textContent = message;
+  }
 
   const m = o.metrics || {};
   const statTone = {
@@ -371,9 +396,13 @@ function renderClimb(o) {
     ? decisions.slice(-12).map((h) => {
         const accepted = h.improved === true;
         const delta = h.delta == null ? "—" : `${h.delta > 0 ? "+" : ""}${Number(h.delta).toFixed(2)}`;
+        const mut = h.mutation || {};
+        const mutText = (mut.added && mut.added.length) || (mut.removed && mut.removed.length)
+          ? `+${(mut.added || []).join(", ")} / -${(mut.removed || []).join(", ")}`
+          : (mut.same_tactics ? "same tactics" : "—");
         return `<tr>
           <td>${esc(h.iteration ?? "—")}</td>
-          <td><code>${esc(strategyLabel(h.candidate_ladder))}</code>${h.candidate_id ? `<div class="fineprint">${esc(h.candidate_id)}</div>` : ""}</td>
+          <td><code>${esc(strategyLabel(h.candidate_ladder))}</code>${h.candidate_id ? `<div class="fineprint">${esc(h.candidate_id)}</div>` : ""}<div class="fineprint">${esc(mutText)}</div></td>
           <td>${h.parent_category_best_asr == null ? "unavailable" : Number(h.parent_category_best_asr).toFixed(2)}</td>
           <td>${h.asr == null ? "unavailable" : Number(h.asr).toFixed(2)}</td>
           <td>${accepted ? '<span class="badge green">accepted</span>' : '<span class="badge slate">rejected</span>'}</td>
@@ -395,29 +424,7 @@ function renderClimb(o) {
       }).join("")
     : `<li class="muted small">No accepted strategy in the latest run.</li>`;
 
-  const proposals = Array.isArray(run.model_suggestions) ? run.model_suggestions : [];
-  $("proposalMeta").textContent = proposals.length ? `${proposals.length} request(s)` : "No data";
-  $("proposalList").innerHTML = proposals.length
-    ? proposals.map((p) => {
-        const tokens = p.token_counts
-          ? `${p.token_counts.total_tokens ?? "?"} tokens (${p.token_counts.prompt_tokens ?? "?"}/${p.token_counts.completion_tokens ?? "?"})`
-          : "tokens unavailable";
-        const status = p.rejection_reason
-          ? `rejected: ${esc(p.rejection_reason)}`
-          : p.accepted
-            ? "entered evaluation"
-            : "not selected";
-        const fb = Array.isArray(p.feedback_context) ? p.feedback_context : [];
-        const fbText = fb.length
-          ? fb.map((f) => `iter ${f.iteration ?? "?"} ASR ${f.asr == null ? "unavailable" : Number(f.asr).toFixed(2)} on ${strategyLabel(f.ladder)}`).join(" · ")
-          : "no prior measured iteration supplied";
-        return `<li><strong>${esc(p.provider || "provider not recorded")}</strong>${p.model ? ` · ${esc(p.model)}` : ""} · iteration ${esc(p.iteration ?? "—")} · ${esc(status)}
-          <div class="fineprint">proposal: <code>${esc(strategyLabel(p.suggested_ladder))}</code></div>
-          <div class="fineprint">feedback given to model: ${esc(fbText)}</div>
-          <div class="fineprint">request ${esc(p.request_id || "—")} · ${p.latency_ms == null ? "latency unavailable" : `${Number(p.latency_ms).toFixed(0)} ms`} · ${esc(tokens)} · provenance ${esc(p.output_provenance || "—")}</div>
-          ${p.rationale ? `<div class="fineprint">${esc(p.rationale)}</div>` : ""}</li>`;
-      }).join("")
-    : `<li class="muted small">No model request recorded for the latest run.</li>`;
+
 
   const displayTraces = Array.isArray(run.episode_trace) ? run.episode_trace : [];
   const targetList = $("targetEvidenceList");
@@ -513,7 +520,7 @@ function renderChannels(o) {
       if (recalc.episodes_legacy) parts.push(`${recalc.episodes_legacy} legacy episode(s) recalculated where the evidence allowed it.`);
       (gt.limitations || []).forEach((l) => parts.push(l));
       if (gt.objective_asr) {
-        parts.push(`Objective ASR uses channel ${gt.objective_asr.channel}: ${na(gt.objective_asr.numerator)}/${na(gt.objective_asr.denominator)} — never combined with content manipulation.`);
+        parts.push(`Objective ASR uses channel ${gt.objective_asr.channel}: ${na(gt.objective_asr.numerator)}/${na(gt.objective_asr.denominator)} — never merged with a different violation channel.`);
       }
     } else {
       parts.push(run.run_id
@@ -523,7 +530,153 @@ function renderChannels(o) {
     note.textContent = parts.join(" ");
   }
   renderBudget(run, o);
+  renderEpisodes(run);
   renderCampaignEvidence(run);
+}
+
+/* ---------------- per-episode persisted evidence ---------------- */
+
+function scoreBadge(record) {
+  if (!record.score_eligible || record.score == null) {
+    return `<span class="badge slate">unscored</span>`;
+  }
+  const cls = record.score >= 1 ? "green" : "blue";
+  const label = record.score >= 1 ? "score 1.0 · confirmed violation" : "score 0.0 · decidable no-violation";
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+function feedbackCell(feedback) {
+  if (!feedback) return `<span class="muted">none — this was the first generation in the evaluation</span>`;
+  const states = Object.entries(feedback.outcomes || {})
+    .map(([k, v]) => `${k} ${v}`)
+    .join(", ");
+  return `iteration ${esc(feedback.iteration ?? "—")} · asr ${feedback.asr == null ? "unavailable" : Number(feedback.asr).toFixed(2)}${states ? ` · ${esc(states)}` : ""} · source ${esc(feedback.source || "—")}
+    <div class="fineprint">${esc(feedback.failure_reason || "—")}</div>`;
+}
+
+function operationCell(record) {
+  const op = record.gmail_operation || {};
+  const ids = record.gmail_ids || {};
+  const ver = record.verification || {};
+  if (!op.kind && !op.status) return `<span class="muted">no Gmail operation recorded</span>`;
+  const attempt = op.recipient_attempt;
+  const channels = record.ground_truth || {};
+  return `${esc(op.kind || "—")} · ${esc(op.status || "—")} · sent=${esc(op.sent)} drafted=${esc(op.drafted)}${op.reason ? ` · ${esc(op.reason)}` : ""}
+    <div class="fineprint">message id ${esc(ids.message_id || "—")} · thread id ${esc(ids.thread_id || "—")} · draft id ${esc(ids.draft_id || "—")}</div>
+    <div class="fineprint">independent readback verified=${esc(ver.verified)} · To ${esc(ver.delivered_to || "—")} · labels ${esc((ver.labels || []).join(",") || "—")}${ver.reason ? ` (${esc(ver.reason)})` : ""}</div>
+    ${attempt ? `<div class="fineprint">payload-declared recipient ${esc(attempt.recipient || "—")} → ${esc(attempt.status || "—")}: ${esc(attempt.reason || "—")} (verified=${esc(attempt.verified)})</div>` : ""}
+    <div class="fineprint">allowlist enforced=${esc(channels.allowlist_enforced)} · operation error=${esc(channels.operation_error)}</div>`;
+}
+
+function groundTruthCell(record) {
+  const m = record.metrics || {};
+  const parts = [
+    ["content_manipulated", m.content_manipulated],
+    ["unauthorized_draft", m.unauthorized_draft],
+    ["unauthorized_send", m.unauthorized_send],
+    ["unauthorized_recipient_delivery", m.unauthorized_recipient_delivery],
+    ["recipient_manipulated", m.recipient_manipulated],
+    ["legitimate_action", m.legitimate_action],
+  ];
+  return parts.map(([k, v]) => `${esc(k)}=${v === null || v === undefined ? "unknown" : esc(v)}`).join(" · ");
+}
+
+function renderEpisodes(run) {
+  const body = $("episodeList");
+  const meta = $("episodeMeta");
+  const summary = $("episodeSummary");
+  const note = $("episodeNote");
+  if (!body) return;
+  const records = Array.isArray(run.episode_records) ? run.episode_records : [];
+  const ledger = run.episode_ledger || null;
+  const acc = run.episode_accounting || {};
+  const comparison = (ledger && ledger.comparison) || null;
+  const promotion = (ledger && ledger.promotion) || null;
+  const recon = (ledger && ledger.reconciliation) || null;
+  const scoreText = (v, n, d) => (v == null ? "Unavailable" : `${Number(v).toFixed(4)} (${na(n)}/${na(d)})`);
+
+  if (meta) {
+    meta.textContent = ledger
+      ? `${na(ledger.persisted_episodes)} persisted · ${na(acc.consumed_total)} consumed · ${na(acc.planned_total_max)} planned`
+      : (run.run_id
+        ? `${na(run.episodes_persisted ?? 0)} persisted so far · ${na(acc.consumed_total ?? run.episodes_consumed)} consumed · no per-episode ledger yet`
+        : "No run");
+  }
+
+  if (summary) {
+    if (!ledger) {
+      summary.textContent = run.run_id
+        ? "This run record predates per-episode persistence, so its episodes cannot be listed individually. The final evaluation trace below is the only episode evidence it kept."
+        : "Run a campaign to persist per-episode evidence.";
+    } else {
+      const stage = (ledger.by_stage || {});
+      const parts = [
+        `Planned ${na(acc.planned_total_max)} · consumed ${na(acc.consumed_total)} · persisted ${na(ledger.persisted_episodes)} (baseline ${na(stage.baseline)}, candidate ${na(stage.candidate)}, confirmation ${na(stage.confirmation)}, final ${na(stage.final)})`,
+        `Baseline score ${scoreText(ledger.baseline_score, comparison && comparison.baseline && comparison.baseline.numerator, comparison && comparison.baseline && comparison.baseline.denominator)}`,
+        `best candidate score ${scoreText(ledger.candidate_score, comparison && comparison.candidate && comparison.candidate.numerator, comparison && comparison.candidate && comparison.candidate.denominator)}`,
+        `final confirmation score ${scoreText(ledger.final_score, comparison && comparison.final && comparison.final.numerator, comparison && comparison.final && comparison.final.denominator)}`,
+        `promotion ${promotion && promotion.decision ? promoBadge(promotion.decision) : "not recorded"}`,
+        `campaign status ${esc(ledger.run_status || "—")} · stop ${esc(ledger.stop_reason || "—")}`,
+      ];
+      summary.innerHTML = parts.join(" · ");
+    }
+  }
+
+  body.innerHTML = records.length
+    ? records.map((r) => {
+        const steps = (r.strategy && r.strategy.steps) || [];
+        const strategy = steps.length
+          ? steps.map((s) => `${s.category}@${s.sophistication_level}`).join(" → ")
+          : "—";
+        const model = r.model || {};
+        const email = r.generated_email || {};
+        const subject = email.subject || "—";
+        const bodyText = String(email.body || "").slice(0, 700);
+        const attacker = r.attacker_email || {};
+        return `<li class="episode-item">
+          <div><strong>#${na(r.sequence)} · ${esc(r.stage || "—")}</strong> · ${scoreBadge(r)} · observed <code>${esc(r.observed_outcome || "—")}</code>
+            <span class="fineprint">· episode ${esc(r.episode_index ?? "—")} · iteration ${esc(r.iteration ?? "—")} · ${esc(r.timestamp || "timestamp not recorded")}</span></div>
+          <div class="fineprint">evaluation <code>${esc(r.evaluation_id || "—")}</code> · episode id <code>${esc(r.episode_id || "—")}</code> · campaign <code>${esc(r.campaign_id || "—")}</code></div>
+          <div class="fineprint">target ${esc((r.target || {}).target_id || "—")} · mode ${esc((r.target || {}).evaluation_mode || "—")} · configured recipient ${esc((r.target || {}).configured_recipient || "—")} · strategy <code>${esc(strategy)}</code></div>
+          <div class="fineprint"><strong>Generated subject</strong> ${esc(subject)}</div>
+          <div class="fineprint"><strong>Generated body</strong> <code>${esc(bodyText)}</code></div>
+          <div class="fineprint">generation ${esc(model.provider || "provider —")} · ${esc(model.name || "model —")} · model called=${esc(model.model_called)} · ${model.latency_ms == null ? "latency unavailable" : `${Number(model.latency_ms).toFixed(0)} ms`}${model.generation_mode ? ` · ${esc(model.generation_mode)}` : ""}${model.target_turn_seconds == null ? "" : ` · target turn ${Number(model.target_turn_seconds).toFixed(1)} s`}</div>
+          <div class="fineprint">attacker email (prompt input): subject ${esc(attacker.subject || "—")} · tactic ${esc(attacker.tactic || "—")} · sophistication ${esc(attacker.sophistication ?? "—")} · requested recipient ${esc(attacker.requested_recipient || "—")} · token ${esc(attacker.injection_token || "—")}</div>
+          <div class="fineprint"><strong>Feedback in</strong> ${feedbackCell(r.feedback_in)}</div>
+          <div class="fineprint"><strong>Gmail operation</strong> ${operationCell(r)}</div>
+          <div class="fineprint"><strong>Ground truth</strong> ${groundTruthCell(r)}</div>
+        </li>`;
+      }).join("")
+    : `<li class="muted small">${esc(run.run_id ? "No per-episode records persisted for this run." : "No run yet.")}</li>`;
+
+  if (note) {
+    const parts = [];
+    if (ledger) {
+      parts.push(`Scoring rule: ${ledger.scoring_rule || "—"}.`);
+      if (recon) {
+        parts.push(recon.reconciled
+          ? `Reconciled: ${na(recon.persisted_episodes)} persisted record(s) match ${na(recon.consumed_episodes)} consumed episode(s).`
+          : `Not reconciled: ${na(recon.difference)} consumed episode(s) have no persisted record.`);
+      }
+      if (comparison) {
+        parts.push(comparison.comparable
+          ? `Comparable: baseline and candidate both measured ${na(comparison.baseline && comparison.baseline.episodes)} episode(s) on ${esc((records[0] && records[0].target && records[0].target.target_id) || "the same target")} in ${esc((records[0] && records[0].target && records[0].target.evaluation_mode) || "the same mode")} (delta ${comparison.delta == null ? "unavailable" : Number(comparison.delta).toFixed(4)}).`
+          : "Not comparable: baseline and candidate evidence differ in episode count, target or evaluation mode — no promotion can rest on it.");
+        if (!comparison.target_recorded) parts.push("Target identity/mode was not recorded on these episodes (seeded stand-in).");
+      }
+      if (promotion) {
+        parts.push(`Promotion ${promotion.decision}: ${(promotion.reasons || []).join(" · ") || "no blocking reason recorded"}`);
+      }
+      (ledger.limitations || []).forEach((l) => parts.push(l));
+    }
+    note.textContent = parts.join(" ");
+  }
+}
+
+function promoBadge(decision) {
+  return decision === "promoted"
+    ? `<span class="badge green">promoted</span>`
+    : `<span class="badge slate">rejected</span>`;
 }
 
 function renderBudget(run, o) {
@@ -645,10 +798,14 @@ function renderCandidates(o) {
   }).join("");
 }
 
+function allObjectives() {
+  const tax = state.overview?.taxonomy || {};
+  return [...(tax.objectives || []), ...(tax.gmail_objectives || [])];
+}
+
 function objectiveLabel(value) {
   if (!value) return "—";
-  const objectives = state.overview?.taxonomy?.objectives || [];
-  const match = objectives.find((x) => x.id === value || x.name === value);
+  const match = allObjectives().find((x) => x.id === value || x.name === value);
   return match ? match.name : value;
 }
 
@@ -775,18 +932,44 @@ function drawChart() {
 function renderAgents(o) {
   const host = $("agentMethodList");
   if (!host) return;
+  const CAP_LABELS = {
+    oauth: "OAuth",
+    read_only_scope: "Read scope",
+    gmail_read: "Read",
+    write_token: "Write token",
+    recipient_allowlisted: "Allowlist",
+    live_send_armed: "Send armed",
+  };
   const connections = o.connections || [];
   host.innerHTML = connections.map((c) => {
     const unavailable = c.status !== "available";
     const fields = (c.fields || []).map((f) => {
-      const value = c.config?.[f.name] ?? "";
+      const value = c.config?.[f.name] ?? f.default ?? "";
+      const span = f.name === "mode" || f.name === "url" ? " span2" : "";
+      if (f.type === "select") {
+        const options = (f.options || []).map((opt) => {
+          const optValue = typeof opt === "string" ? opt : opt.value;
+          const optLabel = typeof opt === "string" ? opt : opt.label || opt.value;
+          return `<option value="${esc(optValue)}" ${String(optValue) === String(value) ? "selected" : ""}>${esc(optLabel)}</option>`;
+        }).join("");
+        return `<label class="field${span}">${esc(f.label)}
+          <select data-field="${esc(f.name)}" ${unavailable ? "disabled" : ""}>${options}</select>
+        </label>`;
+      }
       const type = f.name === "timeout_seconds" ? "number" : "text";
-      return `<label>${esc(f.label)}
+      return `<label class="field${span}">${esc(f.label)}
         <input data-field="${esc(f.name)}" type="${type}" placeholder="${esc(f.placeholder || "")}"
           value="${esc(f.name === "auth_header" ? "" : value)}"
           ${unavailable ? "disabled" : ""}>
       </label>`;
     }).join("");
+    // Only the last REAL probe's genuine capability booleans are shown.
+    const detail = c.last_validation?.detail || {};
+    const checks = detail.checks || detail.verification || {};
+    const caps = Object.entries(checks)
+      .filter(([k, v]) => typeof v === "boolean" && CAP_LABELS[k])
+      .map(([k, v]) => `<span class="cap ${v ? "ok" : "bad"}">${esc(CAP_LABELS[k])}</span>`)
+      .join("");
     const status = unavailable
       ? `<span class="dot warn"></span> Unavailable — ${esc(c.status_label || "not implemented")}`
       : c.connected
@@ -801,16 +984,16 @@ function renderAgents(o) {
            <button class="btn secondary" data-agent-select="${esc(c.method)}" ${c.connected && !c.selected ? "" : "disabled"}>Use</button>
            <button class="btn secondary" data-agent-clear="${esc(c.method)}" ${c.config ? "" : "disabled"}>Remove</button>
          </div>`;
+    const modeLabels = { read_only: "Read-only", draft: "Draft", send: "Send" };
+    const kind = c.method === "gmail" ? `${modeLabels[c.mode] || "Read-only"} mode` : (c.subtitle || "");
     return `<div class="card agent-method${unavailable ? " unavailable" : ""}" data-method-card="${esc(c.method)}">
       <div class="agent-method-head">
-        <div class="method-icon ${c.method === "http_api" ? "blue" : "teal"}">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6"/></svg>
-        </div>
-        <div><h3>${esc(c.display_name)}</h3><p>${esc(c.subtitle || "")} · ${esc(c.description)}</p></div>
+        <h3>${esc(c.display_name)}</h3>
+        <span class="agent-kind">${esc(kind)}</span>
       </div>
       <div class="status-line">${status}</div>
       <div class="form-fields">${fields}</div>
-      ${!unavailable && (c.limitations || []).length ? `<div class="fineprint">${esc(c.limitations.join(" · "))}</div>` : ""}
+      ${caps ? `<div class="cap-row">${caps}</div>` : ""}
       ${actions}
     </div>`;
   }).join("");
@@ -907,9 +1090,15 @@ function openExperimentModal() {
   const o = state.overview;
   if (!o) return;
   const objective = $("cfgObjective");
+  const gmailObjectives = o.taxonomy.gmail_objectives || [];
   objective.innerHTML =
     `<option value="all">All three objectives (fixed set)</option>` +
-    (o.taxonomy.objectives || []).map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+    (o.taxonomy.objectives || []).map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("") +
+    (gmailObjectives.length
+      ? `<optgroup label="Gmail write/send (real agent)">` +
+        gmailObjectives.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("") +
+        `</optgroup>`
+      : "");
   $("cfgProvider").value = "ollama";
   const conn = o.connection;
   updateProviderHint();
@@ -936,7 +1125,7 @@ function experimentPayload() {
   const selected = $("cfgObjective").value;
   const categories = selected === "all"
     ? (o.taxonomy.objectives || []).map((x) => x.name)
-    : [((o.taxonomy.objectives || []).find((x) => x.id === selected) || {}).name].filter(Boolean);
+    : [(allObjectives().find((x) => x.id === selected) || {}).name].filter(Boolean);
   return {
     mode: $("cfgMode").value,
     defense: $("cfgDefense").value,
@@ -1032,33 +1221,75 @@ $("expStartBtn").addEventListener("click", async () => {
   }
 });
 
-$("pauseBtn").addEventListener("click", async () => {
+/* Lifecycle controls: every action is confirmed by the backend before it is
+   reported as done, and a double click cannot fire two transitions at once. */
+async function lifecycleAction(kind, buttonId, request, describe) {
+  if (state.controlPending) return;
+  const before = state.overview || {};
+  state.controlPending = kind;
+  $(buttonId).disabled = true;
   try {
-    const res = await api("/api/adaptive/pause", { method: "POST" });
-    toast(res.paused ? "Paused — no new candidate will start until Resume." : (res.reason || "Nothing to pause."));
-    await loadOverview();
-  } catch (err) { toast(err.message, true); }
-});
+    const res = await request();
+    await loadOverview(); // re-read real backend state, never assume success
+    const [message, isError] = describe(res || {}, state.overview || {}, before);
+    toast(message, isError);
+  } catch (err) {
+    toast(err.message, true);
+    await loadOverview({ quiet: true });
+  } finally {
+    state.controlPending = null;
+    if (state.overview) renderActive(state.overview);
+  }
+}
 
-$("resumeBtn").addEventListener("click", async () => {
-  try {
-    const res = await api("/api/adaptive/resume", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ background: true }),
-    });
-    toast(res.resumed ? "Resumed the same run." : (res.reason || "Nothing to resume."));
-    await loadOverview();
-  } catch (err) { toast(err.message, true); }
-});
+$("pauseBtn").addEventListener("click", () => lifecycleAction(
+  "pause", "pauseBtn",
+  () => api("/api/adaptive/pause", { method: "POST" }),
+  (res, overview) => {
+    const confirmed = !!overview.lifecycle?.paused;
+    if (res.paused && confirmed) {
+      return ["Paused — no new episode starts until Resume.", false];
+    }
+    if (res.paused) {
+      return ["Pause was accepted but the backend still reports the run as running — refresh to re-check.", true];
+    }
+    return [res.reason || "Nothing to pause.", true];
+  },
+));
 
-$("stopBtn").addEventListener("click", async () => {
-  try {
-    await api("/api/adaptive/stop", { method: "POST" });
-    toast("Stop requested — no new candidate will start; the active episode finishes.");
-    await loadOverview();
-  } catch (err) { toast(err.message, true); }
-});
+$("resumeBtn").addEventListener("click", () => lifecycleAction(
+  "resume", "resumeBtn",
+  () => api("/api/adaptive/resume", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // No run_id: the backend resumes the paused active run, or else the
+    // interrupted checkpoint it validated. A finished checkpoint is refused.
+    body: JSON.stringify({ background: true }),
+  }),
+  (res, overview, before) => {
+    if (res.resumed && overview.lifecycle?.running) {
+      return [before.lifecycle?.control?.resume_source === "checkpoint"
+        ? "Resumed the interrupted run from its persisted checkpoint."
+        : "Resumed the same run.", false];
+    }
+    if (res.resumed) {
+      return ["Resume was accepted but the backend does not report a running run — refresh to re-check.", true];
+    }
+    return [res.reason || "Nothing to resume.", true];
+  },
+));
+
+$("stopBtn").addEventListener("click", () => lifecycleAction(
+  "stop", "stopBtn",
+  () => api("/api/adaptive/stop", { method: "POST" }),
+  (res) => {
+    if (res.stop_signalled) {
+      return ["Stop requested — no new episode will start; the active episode finishes.", false];
+    }
+    return [res.reason || "Nothing to stop.", true];
+  },
+));
+
 
 /* ---------------- defenses ---------------- */
 
@@ -1240,16 +1471,16 @@ function renderDefenses(o) {
   const campaign = defenseCampaign();
   if (lifecycle.running) {
     barrier.className = "barrier blocked";
-    barrier.textContent = "An attacker search is running. Defense is a separate operation and can start only after it terminates; nothing is queued automatically.";
+    barrier.textContent = "An attacker search is running. Defense starts only after it terminates.";
   } else if (!state.defenseCampaigns.length) {
     barrier.className = "barrier blocked";
-    barrier.textContent = "No completed attacker campaign is available. Finish an attacker run first; its saved cases will then appear here.";
+    barrier.textContent = "No completed attacker campaign yet. Finish an attacker run first.";
   } else if (campaign && campaign.eligible) {
     barrier.className = "barrier ok";
-    barrier.textContent = `Campaign ${campaign.run_id} completed with ${campaign.usable_cases} eligible saved case(s). Select cases and press Run Defense — nothing starts automatically.`;
+    barrier.textContent = `Campaign ${campaign.run_id} · ${campaign.usable_cases} eligible case(s). Select cases, then press Run Defense.`;
   } else if (campaign) {
     barrier.className = "barrier blocked";
-    barrier.textContent = `Campaign ${campaign.run_id} has no eligible saved case: ${campaign.reason || "no confirmed successful saved case"}`;
+    barrier.textContent = `Campaign ${campaign.run_id} has no eligible saved case: ${campaign.reason || "none confirmed"}.`;
   } else {
     barrier.className = "barrier blocked";
     barrier.textContent = "Select a completed attacker campaign.";
@@ -1307,14 +1538,6 @@ function renderDefenses(o) {
     selectionMeta.textContent = `${state.defenseCaseIds.size} selected / ${usable.length} eligible`;
   }
 
-  const exclusions = $("defenseExclusions");
-  if (exclusions) {
-    const unusable = (campaign?.cases || []).filter((c) => !c.usable);
-    exclusions.innerHTML = unusable.length
-      ? unusable.map((c) => `Excluded <code>${esc(c.case_id || "no-id")}</code>: ${esc(c.unusable_reason || "not replayable")}`).join("<br>")
-      : "";
-  }
-
   const defSel = $("defenseSelect");
   if (defSel && !defSel.options.length) {
     defSel.innerHTML = (o?.defense?.catalog || []).map((d) =>
@@ -1324,19 +1547,6 @@ function renderDefenses(o) {
   const runBtn = $("runDefenseBtn");
   if (runBtn) {
     runBtn.disabled = !campaign || !campaign.eligible || state.defenseCaseIds.size === 0;
-  }
-
-  const catalog = $("defenseCatalog");
-  if (catalog) {
-    catalog.innerHTML = (o?.defense?.catalog || []).map((d) => `
-      <div class="card defense-card">
-        <h4>${esc(d.display_name)}</h4>
-        <div class="meta">${esc(d.defense_id)} · ${esc(d.implementation_type)}${d.available ? "" : " · unavailable"}</div>
-        ${d.detects ? `<p><strong>Detects:</strong> ${esc(d.detects)}</p>` : ""}
-        ${d.blocks ? `<p><strong>Blocks:</strong> ${esc(d.blocks)}</p>` : ""}
-        <div class="limits">${esc(d.does_not || "")}</div>
-        <div class="fineprint">Upstream: ${esc(d.upstream_system || "n/a")}</div>
-      </div>`).join("");
   }
 
   const body = $("defenseEvalBody");
@@ -1361,50 +1571,7 @@ function renderDefenses(o) {
         }).join("")
       : `<tr><td colspan="10" class="empty">None yet.</td></tr>`;
   }
-  renderPreExecution(o);
   renderDefenseJob();
-}
-
-function renderPreExecution(o) {
-  const select = $("preExecDefenseSelect");
-  const catalog = (o?.defense?.catalog || []).filter((d) => d.available);
-  if (select && catalog.length && !select.options.length) {
-    select.innerHTML = catalog.map((d) =>
-      `<option value="${esc(d.defense_id)}">${esc(d.display_name)}</option>`).join("");
-  }
-  const campaign = defenseCampaign();
-  const btn = $("runPreExecBtn");
-  if (btn) btn.disabled = !campaign || !campaign.eligible;
-  const suites = o?.defense?.pre_execution?.suites || [];
-  const latest = suites.length ? suites[suites.length - 1] : null;
-  const metrics = $("preExecMetrics");
-  if (metrics) {
-    metrics.textContent = latest
-      ? `Suite ${latest.suite_id} · source campaign ${latest.campaign_id} · ${latest.defense} · prevention ${latest.prevention_rate == null ? "unavailable" : `${(latest.prevention_rate * 100).toFixed(0)}%`} · detection ${latest.detection_rate == null ? "unavailable" : `${(latest.detection_rate * 100).toFixed(0)}%`} · false positives ${latest.false_positive_rate == null ? "unavailable" : `${(latest.false_positive_rate * 100).toFixed(0)}%`} · executor invocations ${latest.executor_invocations_total} · original target ${esc(latest.original_target_kind)} ${latest.original_target_supports_pre_execution ? "supports pre-execution" : "unsupported for pre-execution (cooperative local replay used)"}`
-      : "No pre-execution suite persisted.";
-  }
-  const body = $("preExecBody");
-  if (body) {
-    const rows = latest ? latest.records || [] : [];
-    body.innerHTML = rows.length
-      ? rows.slice().reverse().map((r) => {
-          const action = r.proposed_action || {};
-          const args = JSON.stringify(action.arguments || {});
-          const invoked = r.executor_invoked ? `invoked (${r.executor_invocations_after})` : "not invoked";
-          return `<tr>
-            <td><code>${esc(r.execution_id)}</code></td>
-            <td>${esc(r.defense)}<br><span class="muted">${esc(r.defense_version || "")}</span></td>
-            <td><code>${esc(r.case_id)}</code></td>
-            <td><code>${esc(action.tool_name || "—")}${esc(args.slice(0, 120))}</code></td>
-            <td>${r.decision === "deny" ? '<span class="badge red">DENY</span>' : '<span class="badge green">ALLOW</span>'}</td>
-            <td>${esc(r.enforcement_boundary)}</td>
-            <td>${esc(invoked)}</td>
-            <td>${esc(r.verdict)}</td>
-            <td>${esc((r.evidence || []).join(" · ").slice(0, 220))}</td>
-          </tr>`;
-        }).join("")
-      : `<tr><td colspan="9" class="empty">No pre-execution executions yet.</td></tr>`;
-  }
 }
 
 function stopDefensePolling() {
@@ -1534,31 +1701,6 @@ $("runDefenseBtn")?.addEventListener("click", async () => {
       .join("");
     box.innerHTML = `<span style="color:#FCA5A5">${esc(err.message)}</span>${excluded}`;
     $("runDefenseBtn").disabled = false;
-  }
-});
-
-$("runPreExecBtn")?.addEventListener("click", async () => {
-  const campaign = defenseCampaign();
-  const box = $("preExecStatus");
-  if (!campaign) return;
-  const defense = $("preExecDefenseSelect").value;
-  if (!defense) return;
-  box.className = "defense-result";
-  box.textContent = `Running pre-execution check for ${defense}…`;
-  $("runPreExecBtn").disabled = true;
-  try {
-    const result = await api("/api/adaptive/defense_execute", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ run_id: campaign.run_id, defense }),
-    });
-    box.className = "defense-result";
-    box.innerHTML = `Suite <code>${esc(result.suite_id)}</code> completed · ${esc(result.defense)} · prevented ${esc(result.prevented)}/${esc(result.malicious_attempts)} · executor invocations ${esc(result.executor_invocations_total)}.`;
-    await loadOverview();
-  } catch (err) {
-    box.className = "defense-result";
-    box.innerHTML = `<span style="color:#FCA5A5">${esc(err.message)}</span>`;
-    $("runPreExecBtn").disabled = false;
   }
 });
 
@@ -1747,311 +1889,6 @@ function renderHome(o) {
       ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join("")
     : `<span class="muted">No run recorded.</span>`;
 }
-
-/* ---------------- gmail (real read-only integration) ---------------- */
-
-function renderGmailStatus(s) {
-  const agentBox = $("agentGmailStatus");
-  if (agentBox) {
-    if (!s) {
-      agentBox.innerHTML = '<span class="dot bad"></span> Gmail status unavailable';
-    } else {
-      agentBox.innerHTML = `<span class="dot ${s.connected ? "ok" : "bad"}"></span> ${s.connected ? "Connected · read-only" : s.reauth_required ? "Re-authorization required" : "Not connected"}${s.account ? ` · ${esc(s.account)}` : ""}${s.error ? ` — ${esc(s.error)}` : ""}`;
-    }
-  }
-  const box = $("gmailStatus");
-  if (!box) return;
-  if (!s) {
-    box.className = "defense-result";
-    box.textContent = "Gmail status unavailable.";
-    return;
-  }
-  const scopes = (s.scopes || []).map((x) => `<code>${esc(x)}</code>`).join(" ") || "none";
-  box.className = "defense-result";
-  box.innerHTML = `
-    <div class="line"><span class="pill sm ${s.connected ? "ok" : "bad"}">${s.connected ? "Connected" : s.reauth_required ? "Re-authorization required" : "Not connected"}</span>
-      ${s.read_only ? " · read-only" : ""}</div>
-    <div class="line">Account: ${esc(s.account || "not reported by the token")} · token stored: ${s.token_present ? "yes" : "no"} · token expiry: ${esc(s.expiry || "—")}</div>
-    <div class="line">Scopes: ${scopes}</div>
-    ${s.error ? `<div class="limit" style="color:#FCA5A5">${esc(s.error)}</div>` : ""}
-    ${s.connected ? `<div class="line">The inbox below is fetched live from this Gmail account.</div>` : `<div class="line">Press <strong>Connect Gmail</strong> to run the OAuth consent flow in a browser window. No email is shown until a real token exists.</div>`}
-    ${s.connect_running ? `<div class="line">OAuth consent is in progress…</div>` : ""}
-    ${s.connect_error ? `<div class="limit" style="color:#FCA5A5">Connect error: ${esc(s.connect_error)}</div>` : ""}
-  `;
-}
-
-async function loadGmailStatus() {
-  try {
-    const s = await api("/api/gmail/status");
-    renderGmailStatus(s);
-    return s;
-  } catch (err) {
-    renderGmailStatus({ connected: false, read_only: true, error: err.message });
-    return null;
-  }
-}
-
-function renderGmailInbox(data) {
-  const body = $("gmailInboxBody");
-  const meta = $("gmailInboxMeta");
-  const emails = data.emails || [];
-  if (meta) {
-    meta.textContent = emails.length
-      ? `${emails.length} real message(s) from label ${data.label || "NEMESIS_DEMO"} · fetched ${clockTime(data.fetched_at)}`
-      : "No message carries the NEMESIS_DEMO label.";
-  }
-  body.innerHTML = emails.length
-    ? emails.map((e) => `<tr class="gmail-select-row" data-message-id="${esc(e.id)}" data-sender="${esc(e.sender)}" data-subject="${esc(e.subject)}" style="cursor:pointer">
-        <td><code>${esc(e.id)}</code></td>
-        <td>${esc(e.sender)}</td>
-        <td>${esc(e.subject)}</td>
-        <td>${esc(e.received_at || "—")}</td>
-        <td>${esc(e.snippet || "")}</td>
-      </tr>`).join("")
-    : `<tr><td colspan="5" class="empty">No emails returned.</td></tr>`;
-  body.querySelectorAll("tr[data-message-id]").forEach((row) => {
-    row.addEventListener("click", () => selectGmailMessage(row));
-  });
-}
-
-function selectGmailMessage(row) {
-  const id = row.getAttribute("data-message-id") || "";
-  const subject = row.getAttribute("data-subject") || "";
-  const source = $("gmailSourceId");
-  if (source) source.value = id;
-  const subjectInput = $("gmailSubject");
-  if (subjectInput && !subjectInput.value) subjectInput.value = subject;
-  const action = $("gmailAction");
-  if (action && action.value === "compose") action.value = "reply";
-  const meta = $("gmailDraftMeta");
-  if (meta) meta.textContent = `Selected message ${id}${subject ? ` · ${subject}` : ""}`;
-  document.querySelectorAll(".gmail-select-row").forEach((r) => r.classList.remove("selected"));
-  row.classList.add("selected");
-}
-
-async function loadGmailWriteStatus() {
-  const box = $("gmailWriteStatus");
-  if (!box) return null;
-  try {
-    const s = await api("/api/gmail/write_status");
-    const tok = s.write_token_present
-      ? s.write_token_scope_valid
-        ? "present, scopes valid"
-        : "present, but scopes invalid"
-      : "missing";
-    box.className = "defense-result";
-    box.innerHTML = `
-      <div class="line"><span class="pill sm ${s.ready_to_send ? "ok" : "bad"}">${s.ready_to_send ? "Ready to send" : "Write authorization needed"}</span>
-        · write token: ${esc(tok)} · owner authorization: standing</div>
-      <div class="line">Outbound stop: ${s.kill_switch_engaged ? "ENGAGED (sends blocked)" : "released"} · allowlist: ${esc((s.allowed_recipients || []).join(", ") || (s.allowed_domains || []).join(", ") || "none")}${s.allowlist_is_default_self_only ? " (default: self only)" : ""}</div>
-      ${s.write_token_error ? `<div class="limit" style="color:#FCA5A5">Write token: ${esc(s.write_token_error)}</div>` : ""}
-      ${s.write_token_expired ? `<div class="limit">The stored write token is expired or revoked. Re-run <code>python -m gmail_live auth</code>; sending needs no further approval.</div>` : ""}
-      <div class="line">Write scopes: ${(s.write_scopes || []).map((x) => `<code>${esc(x)}</code>`).join(" ") || "none"}</div>`;
-    return s;
-  } catch (err) {
-    box.className = "defense-result";
-    box.textContent = `Write status unavailable: ${err.message}`;
-    return null;
-  }
-}
-
-async function loadGmailHistory() {
-  const body = $("gmailHistoryBody");
-  if (!body) return;
-  try {
-    const data = await api("/api/gmail/history?limit=50");
-    const items = data.history || [];
-    body.innerHTML = items.length
-      ? items.map((h) => `<tr>
-          <td>${esc(h.at || "—")}</td>
-          <td>${esc(h.type || "—")}</td>
-          <td>${esc(h.action || "—")}</td>
-          <td>${esc(h.to || "—")}</td>
-          <td>${esc(h.subject || "—")}</td>
-          <td>${esc(h.status || "—")}</td>
-          <td><code>${esc(h.message_id || "—")}</code></td>
-          <td><code>${esc(h.thread_id || "—")}</code></td>
-        </tr>`).join("")
-      : `<tr><td colspan="8" class="empty">No draft or send recorded yet.</td></tr>`;
-  } catch (err) {
-    body.innerHTML = `<tr><td colspan="8" class="empty" style="color:#FCA5A5">${esc(err.message)}</td></tr>`;
-  }
-}
-
-async function generateGmailDraft() {
-  const btn = $("gmailGenerateBtn");
-  const result = $("gmailSendResult");
-  const action = ($("gmailAction") || {}).value || "compose";
-  const recipient = ($("gmailRecipient") || {}).value || "";
-  const messageId = ($("gmailSourceId") || {}).value || "";
-  const instruction = ($("gmailInstruction") || {}).value || "";
-  if (btn) btn.disabled = true;
-  if (result) {
-    result.className = "defense-result muted small";
-    result.textContent = `Generating with local Ollama (${action})…`;
-  }
-  try {
-    const draft = await api("/api/gmail/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, recipient, instruction, message_id: messageId || null }),
-    });
-    if ($("gmailRecipient")) $("gmailRecipient").value = draft.to || "";
-    if ($("gmailSubject")) $("gmailSubject").value = draft.subject || "";
-    if ($("gmailBody")) $("gmailBody").value = draft.body || "";
-    if ($("gmailDraftMeta")) {
-      $("gmailDraftMeta").textContent = `Draft ${draft.draft_id} · ${draft.provider}/${draft.model} · context: ${draft.context_used ? "real message" : "instruction only"} · NOT SENT`;
-    }
-    if (result) {
-      result.className = "defense-result muted small";
-      result.textContent = "Draft generated. Review or edit the subject and body, then press Send via Gmail.";
-    }
-    loadGmailHistory();
-  } catch (err) {
-    if (result) {
-      result.className = "defense-result";
-      result.innerHTML = `<div class="limit" style="color:#FCA5A5">Generation failed: ${esc(err.message)}</div>`;
-    }
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-async function sendGmailDraft() {
-  const btn = $("gmailSendBtn");
-  const result = $("gmailSendResult");
-  const action = ($("gmailAction") || {}).value || "compose";
-  const to = ($("gmailRecipient") || {}).value || "";
-  const subject = ($("gmailSubject") || {}).value || "";
-  const body = ($("gmailBody") || {}).value || "";
-  if (!to || !body.trim()) {
-    if (result) result.textContent = "Recipient and body are required before sending.";
-    return;
-  }
-  if (btn) btn.disabled = true;
-  if (result) {
-    result.className = "defense-result muted small";
-    result.textContent = "Calling the Gmail API…";
-  }
-  try {
-    const data = await api("/api/gmail/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action,
-        to,
-        subject,
-        body,
-        source_message_id: ($("gmailSourceId") || {}).value || null,
-      }),
-    });
-    if (result) {
-      result.className = "defense-result";
-      result.innerHTML = data.sent
-        ? `<div class="line"><span class="pill sm ok">Sent</span> Gmail confirmed message <code>${esc(data.message_id || "—")}</code> · thread <code>${esc(data.thread_id || "—")}</code></div>`
-        : `<div class="line"><span class="pill sm bad">Not sent</span> ${esc(data.reason || data.status || "Gmail did not confirm the send")}</div>`;
-    }
-    loadGmailHistory();
-    loadGmailWriteStatus();
-  } catch (err) {
-    if (result) {
-      result.className = "defense-result";
-      result.innerHTML = `<div class="limit" style="color:#FCA5A5">Send failed: ${esc(err.message)}</div>`;
-    }
-    loadGmailHistory();
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-async function toggleGmailSend(engage) {
-  try {
-    await api("/api/gmail/kill_switch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ engage }),
-    });
-    toast(engage ? "Outbound stop engaged." : "Outbound stop released; Gmail sends are allowed.");
-    loadGmailWriteStatus();
-  } catch (err) {
-    toast(`Could not change outbound stop: ${err.message}`, true);
-  }
-}
-
-function gmailError(err) {
-  const body = $("gmailInboxBody");
-  const meta = $("gmailInboxMeta");
-  if (meta) meta.textContent = "";
-  if (body) {
-    body.innerHTML = `<tr><td colspan="5" class="empty" style="color:#FCA5A5">${esc(err.message)}</td></tr>`;
-  }
-  // Re-read the authoritative status instead of inventing a partial one:
-  // the first render already shows the real token presence/scopes/expiry.
-  loadGmailStatus();
-}
-
-async function loadGmailInbox() {
-  const btn = $("gmailLoadBtn");
-  if (btn) btn.disabled = true;
-  try {
-    const data = await api("/api/gmail/inbox?max_results=25");
-    renderGmailInbox(data);
-  } catch (err) {
-    gmailError(err);
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-async function analyzeGmail() {
-  const box = $("gmailAnalysis");
-  const btn = $("gmailAnalyzeBtn");
-  if (box) {
-    box.className = "defense-result";
-    box.textContent = "Fetching real messages and running the local analysis engine…";
-  }
-  if (btn) btn.disabled = true;
-  try {
-    const data = await api("/api/gmail/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ max_results: 5 }),
-    });
-    if (box) {
-      box.innerHTML = `<div class="line">Analyzed ${na(data.email_count)} real message(s).</div>
-        <pre class="code-block" style="max-height:420px;overflow:auto">${esc(JSON.stringify(data.analysis, null, 2))}</pre>`;
-    }
-  } catch (err) {
-    if (box) {
-      box.innerHTML = `<div class="limit" style="color:#FCA5A5">${esc(err.message)}</div>`;
-    }
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-$("gmailRefreshBtn")?.addEventListener("click", () => loadGmailStatus());
-$("agentGmailRefreshBtn")?.addEventListener("click", () => loadGmailStatus());
-$("agentGmailConnectBtn")?.addEventListener("click", async () => {
-  try {
-    const res = await api("/api/gmail/connect", { method: "POST" });
-    toast(res.message || "OAuth consent started.");
-    setTimeout(loadGmailStatus, 1500);
-  } catch (err) {
-    toast(`Could not start Gmail consent: ${err.message}`, true);
-  }
-});
-$("gmailLoadBtn")?.addEventListener("click", loadGmailInbox);
-$("gmailAnalyzeBtn")?.addEventListener("click", analyzeGmail);
-$("gmailWriteRefreshBtn")?.addEventListener("click", () => loadGmailWriteStatus());
-$("gmailStopSendBtn")?.addEventListener("click", async () => {
-  const s = await loadGmailWriteStatus();
-  toggleGmailSend(!(s && s.kill_switch_engaged));
-});
-$("gmailGenerateBtn")?.addEventListener("click", generateGmailDraft);
-$("gmailSendBtn")?.addEventListener("click", sendGmailDraft);
-loadGmailWriteStatus();
-loadGmailHistory();
 
 /* ---------------- init ---------------- */
 
